@@ -695,7 +695,7 @@ function getGaugeSetSubStations() {
   const northernBeachesStations = allStations.filter(s => getLGA(s) === 'Northern Beaches');
   if (sub === 'standard') {
     // Standard 15 - search ALL stations (including inactive) so we always show them
-    return allStationsAll.filter(s => NORTHERN_BEACHES_STANDARD_15.includes(s.name));
+    return allStations.filter(s => NORTHERN_BEACHES_STANDARD_15.includes(s.name));
   }
   if (sub === 'north')    return northernBeachesStations.filter(s => NORTHERN_BEACHES_NORTH.includes(s.name));
   if (sub === 'south')    return northernBeachesStations.filter(s => NORTHERN_BEACHES_SOUTH.includes(s.name));
