@@ -1997,8 +1997,10 @@ async function init() {
 }
 
 function setStatus(ok, txt) {
-  document.getElementById('dot').style.background = ok ? '#27AE60' : '#E74C3C';
-  document.getElementById('status-txt').textContent = txt;
+  const dot = document.getElementById('dot');
+  const lbl = document.getElementById('status-txt');
+  if (dot) dot.style.background = ok ? '#27AE60' : '#E74C3C';
+  if (lbl) lbl.textContent = txt;
 }
 
 async function loadStations() {
@@ -2934,7 +2936,7 @@ const NORTHERN_BEACHES_SOUTH = [
 
 function isProtectedNorthernBeachesStation(station) {
   if (!station) return false;
-  return station.lga === 'Northern Beaches'
+  return station.lga?.startsWith('Northern Beaches')
     || NORTHERN_BEACHES_STANDARD_15.includes(station.name)
     || NORTHERN_BEACHES_NORTH.includes(station.name)
     || NORTHERN_BEACHES_SOUTH.includes(station.name);
