@@ -38,7 +38,20 @@ data/station-verification/
 docs/
 excel_vba/
 extracted_vba/
-stormwater-tools/
+# stormwater tool source folder — track sources, keep junk ignored
+stormwater-tools/.git/
+stormwater-tools/.git.local-backup-2026-05-05
+stormwater-tools/Superseded/
+stormwater-tools/Superseeded/
+stormwater-tools/_staging_rebuild/
+stormwater-tools/__pycache__/
+stormwater-tools/**/__pycache__/
+stormwater-tools/**/*.pyc
+stormwater-tools/**/dist/
+stormwater-tools/**/build/
+stormwater-tools/**/base_library.zip
+stormwater-tools/bom_ifd_cache.js
+stormwater-tools/bom_station_activity_cache.json
 rainfall-tool-standalone/
 packaging_config.example.json
 requirements-arcgis.txt
