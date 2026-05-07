@@ -12,7 +12,7 @@
 //   "unknown"      outside validated archive bounds or insufficient metadata
 //
 // Periods below are anchored to the validated archive (final backfill report,
-// see data/radar_archive/reports/lizard_full_backfill_final_report.md).
+// see archive/research/lizard_radar_backfill/lizard_full_backfill_final_report.md).
 
 export const RADAR_STATE = Object.freeze({
   AVAILABLE: 'available',
