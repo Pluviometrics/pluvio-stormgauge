@@ -288,6 +288,17 @@ html[data-theme="dark"] ::-webkit-scrollbar-thumb:hover { background: #2A4060; }
 <div id="page-nav" style="display:none">
   <button class="pnav-btn active" data-page="aep" onclick="switchPage('aep')">Rainfall Calculator</button>
   <button class="pnav-btn pnav-home" data-page="home" onclick="switchPage('home')">Home</button>
+  <div id="rainfall-day-toggle" class="rainfall-day-toggle"
+       role="radiogroup" aria-label="Rainfall day boundary"
+       title="Choose how each rainfall day starts. Default is midnight to 11:59pm Sydney; 9am day is the BOM rainfall day.">
+    <span class="rainfall-day-toggle__label">Rainfall day:</span>
+    <button type="button" class="rainfall-day-toggle__btn rainfall-day-toggle__btn--active"
+            data-rday-mode="midnight" role="radio" aria-checked="true"
+            onclick="setRainfallDayMode('midnight')">Midnight–11:59pm</button>
+    <button type="button" class="rainfall-day-toggle__btn"
+            data-rday-mode="9am" role="radio" aria-checked="false"
+            onclick="setRainfallDayMode('9am')">9am–8:59am (BOM)</button>
+  </div>
 </div>
 
 <!-- Home Screen -->
@@ -869,6 +880,7 @@ html[data-theme="dark"] ::-webkit-scrollbar-thumb:hover { background: #2A4060; }
   import * as mapLayers           from './src/modules/map/mapLayers.js';
   import * as uiTheme             from './src/modules/ui/theme.js';
   import * as uiControls          from './src/modules/ui/controls.js';
+  import * as rainfallDay         from './src/modules/rainfall/dailyGrouping.js';
   window.buildExportModel    = buildExportModel;
   window.exportCSV           = exportCSV;
   window.exportXLSX          = exportXLSX;
@@ -882,6 +894,7 @@ html[data-theme="dark"] ::-webkit-scrollbar-thumb:hover { background: #2A4060; }
   window.mapLayers           = mapLayers;
   window.uiTheme             = uiTheme;
   window.uiControls          = uiControls;
+  window.rainfallDay         = rainfallDay;
   window.dispatchEvent(new Event('atmos-modules-ready'));
 
 // ═══ RELINING PACKAGING FUNCTIONS (restored from commit 14e7277) ═══
@@ -3489,7 +3502,10 @@ function renderDailyTotals(data) {
   updateRecalcButton();
   setResultsTabMode('single-table');
   document.getElementById('res-title').textContent = `Daily Totals - ${data.station_name}`;
-  document.getElementById('res-sub').textContent = `${fmtDt(data.from)} -> ${fmtDt(data.to)} - 24hr periods from midnight`;
+  const __periodLabel = (window.rainfallDay && window.rainfallDay.RAINFALL_DAY_PERIOD_LABEL
+      && window.rainfallDay.RAINFALL_DAY_PERIOD_LABEL[window.RAINFALL_DAY_MODE || 'midnight'])
+    || '24hr periods from midnight (Sydney)';
+  document.getElementById('res-sub').textContent = `${fmtDt(data.from)} -> ${fmtDt(data.to)} - ${__periodLabel}`;
 
   if (!data.readings?.length) {
     document.getElementById('r-allsite').innerHTML =
@@ -3498,13 +3514,16 @@ function renderDailyTotals(data) {
     return;
   }
 
-  // Group by day
+  // Group by rainfall-day per the active mode (default 'midnight').
   const byDay = {};
+  const __mode = window.RAINFALL_DAY_MODE || 'midnight';
+  const __dayKey = (window.rainfallDay && window.rainfallDay.rainfallDayKey)
+    || ((ts) => new Date(String(ts).replace(' ', 'T')).toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' }));
   data.readings.forEach(r => {
-    const day = new Date(r.timestamp.replace(' ','T'))
-      .toLocaleDateString('en-CA', {timeZone:'Australia/Sydney'});
+    const day = __dayKey(r.timestamp, __mode);
+    if (!day) return;
     if (!byDay[day]) byDay[day] = 0;
-    byDay[day] += r.value;
+    if (Number.isFinite(Number(r.value))) byDay[day] += Number(r.value);
   });
 
   const days = Object.entries(byDay)
@@ -3642,7 +3661,7 @@ function renderResults(data, wx, rainToday) {
         <div class="aep-hero-interp">${aep?.interpretation || interpretation(aepStr)}</div>
         <div class="aep-hero-ari">Return period: ${aepToARI(aep || aepStr)}</div>
         ${wx ? `<div class="aep-hero-ari" style="margin-top:4px">
-          ${tempIcon(wx.weather_code)} ${wx.temperature_c}°C - Wind ${wx.wind_speed_kmh} km/h ${degToCompass(wx.wind_dir_deg)} - Rain ${rainToday!=null?rainToday.toFixed(1)+' mm':'-'} since midnight
+          ${tempIcon(wx.weather_code)} ${wx.temperature_c}°C - Wind ${wx.wind_speed_kmh} km/h ${degToCompass(wx.wind_dir_deg)} - Rain ${(window.rainfallDay && window.rainfallDay.formatRainfallMm) ? window.rainfallDay.formatRainfallMm(rainToday) : (Number.isFinite(Number(rainToday)) ? Number(rainToday).toFixed(1) + ' mm' : '-')} ${(window.rainfallDay && window.rainfallDay.rainTodaySinceLabel) ? window.rainfallDay.rainTodaySinceLabel(window.RAINFALL_DAY_MODE || 'midnight') : 'since midnight'}
         </div>` : ''}
       </div>
     </div>
@@ -3998,11 +4017,14 @@ function getSortedTopDurationResults() {
 
 function buildDailyRows(readings) {
   const byDay = {};
+  const __mode = window.RAINFALL_DAY_MODE || 'midnight';
+  const __dayKey = (window.rainfallDay && window.rainfallDay.rainfallDayKey)
+    || ((ts) => new Date(String(ts).replace(' ', 'T')).toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' }));
   (readings || []).forEach(r => {
-    const day = new Date(r.timestamp.replace(' ','T'))
-      .toLocaleDateString('en-CA', {timeZone:'Australia/Sydney'});
+    const day = __dayKey(r.timestamp, __mode);
+    if (!day) return;
     if (!byDay[day]) byDay[day] = 0;
-    byDay[day] += r.value;
+    if (Number.isFinite(Number(r.value))) byDay[day] += Number(r.value);
   });
   return Object.entries(byDay)
     .sort(([a],[b]) => a.localeCompare(b))
@@ -4016,13 +4038,17 @@ function buildDailyRows(readings) {
 
 function buildHourlyRows(readings) {
   const byDayHour = {};
+  const __mode = window.RAINFALL_DAY_MODE || 'midnight';
+  const __dayKey = (window.rainfallDay && window.rainfallDay.rainfallDayKey)
+    || ((ts) => new Date(String(ts).replace(' ', 'T')).toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' }));
   (readings || []).forEach(r => {
-    const d = new Date(r.timestamp.replace(' ','T'));
-    const day = d.toLocaleDateString('en-CA', {timeZone:'Australia/Sydney'});
+    const d = new Date(String(r.timestamp).replace(' ','T'));
+    const day = __dayKey(r.timestamp, __mode);
+    if (!day) return;
     const hour = parseInt(d.toLocaleTimeString('en-AU',
       {timeZone:'Australia/Sydney', hour:'2-digit', hour12:false}));
     if (!byDayHour[day]) byDayHour[day] = Array(24).fill(0);
-    if (hour >= 0 && hour < 24) byDayHour[day][hour] += r.value;
+    if (hour >= 0 && hour < 24 && Number.isFinite(Number(r.value))) byDayHour[day][hour] += Number(r.value);
   });
 
   return Object.entries(byDayHour)
@@ -5199,6 +5225,32 @@ let criticalAssetsSourceName = '';
 let criticalCombinedSourceName = '';
 let criticalInspectionSourceName = '';
 
+
+// ── Rainfall-day boundary toggle (audit fix) ───────────────────────────
+// Default remains midnight–11:59pm Australia/Sydney (existing behaviour).
+// '9am' option implements BOM rainfall day (9:00am–8:59am).
+window.RAINFALL_DAY_MODE = window.RAINFALL_DAY_MODE || 'midnight';
+
+function setRainfallDayMode(mode) {
+  const allowed = (window.rainfallDay && window.rainfallDay.RAINFALL_DAY_MODES) || ['midnight', '9am'];
+  if (!allowed.includes(mode)) return;
+  if (window.RAINFALL_DAY_MODE === mode) return;
+  window.RAINFALL_DAY_MODE = mode;
+  document.querySelectorAll('.rainfall-day-toggle__btn').forEach((btn) => {
+    const active = btn.dataset.rdayMode === mode;
+    btn.classList.toggle('rainfall-day-toggle__btn--active', active);
+    btn.setAttribute('aria-checked', String(active));
+  });
+  // Recalculate any visible daily/period totals.
+  if (typeof lastDailyData !== 'undefined' && lastDailyData) {
+    try { renderDailyTotals(lastDailyData); } catch (e) { console.warn('[rainfall-day] re-render daily failed', e); }
+  }
+  if (typeof lastResults !== 'undefined' && lastResults) {
+    try { renderResults(lastResults, lastResults.weather, lastResults.rainToday); } catch (e) { console.warn('[rainfall-day] re-render results failed', e); }
+  }
+  document.dispatchEvent(new CustomEvent('rainfall-day-mode-changed', { detail: { mode } }));
+}
+window.setRainfallDayMode = setRainfallDayMode;
 
 // â"€â"€ Page navigation â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 const PAGES = ['home', 'aep'];
