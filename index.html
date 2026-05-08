@@ -2636,10 +2636,13 @@ async function fetchStationRainfall(station, fromDt, toDt, durationMinutes = 30)
       console.log('[DEBUG Oliver St] MHL readings after fetch:', mhlReadings.length);
       console.groupEnd();
     }
+    const mhlQc = applyRainfallQc(mhlReadings, 5, sName);
     return {
-      readings: applyRainfallQc(mhlReadings, 5, sName),
+      readings: mhlQc.cleanedReadings,
       source: 'MHL KiWIS 5-minute rainfall',
-      intervalMinutes: 5
+      intervalMinutes: 5,
+      mhlQcRejected: mhlQc.rejectedReadings.length,
+      mhlQcTotal: mhlReadings.length
     };
   }
 
@@ -2762,21 +2765,46 @@ async function fetchWeather(lat, lon) {
 }
 function degToCompass(d){const a=['N','NE','E','SE','S','SW','W','NW'];return a[Math.round(d/45)%8];}
 function applyRainfallQc(readings, intervalMinutes, stationName) {
-  if (!readings || readings.length < 3) return readings;
+  if (!readings || !readings.length) {
+    return { cleanedReadings: [], rejectedReadings: [], rejectionReasons: [] };
+  }
   const ABS_CAP_MM = 150;
-  readings.forEach((r, i) => {
-    if (r.value <= 0) return;
+  const cleanedReadings = [];
+  const rejectedReadings = [];
+  const rejectionReasons = [];
+
+  for (let i = 0; i < readings.length; i++) {
+    const r = readings[i];
     const prev = i > 0 ? readings[i - 1].value : 0;
     const next = i < readings.length - 1 ? readings[i + 1].value : 0;
     const neighborMax = Math.max(prev, next, 0.1);
-    const isAbsurdlyLarge = r.value > ABS_CAP_MM;
-    const isIsolatedSpike = r.value > neighborMax * 10 && r.value > 20;
-    if (isAbsurdlyLarge || isIsolatedSpike) {
-      console.warn('[RainQC Suspicious]', stationName || '?', r.value + 'mm', 'at', r.timestamp,
-        `(${(r.value / intervalMinutes * 60).toFixed(1)} mm/hr, neighbors: prev=${prev} next=${next})`);
+
+    let reason = null;
+    if (!isFinite(r.value) || r.value < 0) {
+      reason = 'invalid value';
+    } else if (r.value > ABS_CAP_MM) {
+      reason = `exceeds cap: ${r.value}mm > ${ABS_CAP_MM}mm`;
+    } else if (r.value > neighborMax * 10 && r.value > 20) {
+      reason = `isolated spike: ${r.value}mm vs neighbor max ${neighborMax}mm`;
     }
+
+    if (reason) {
+      rejectedReadings.push(r);
+      rejectionReasons.push(reason);
+    } else {
+      cleanedReadings.push(r);
+    }
+  }
+
+  console.log('[MHL RainQC]', {
+    stationName,
+    originalCount: readings.length,
+    cleanedCount: cleanedReadings.length,
+    rejectedCount: rejectedReadings.length,
+    rejectedSamples: rejectedReadings.slice(0, 3).map(r => ({ timestamp: r.timestamp, value: r.value }))
   });
-  return readings;
+
+  return { cleanedReadings, rejectedReadings, rejectionReasons };
 }
 
 // Diagnostic logger for BOM data shape investigation (targeted stations only).
@@ -2990,7 +3018,9 @@ async function analyseStation(station, dur, fromDt, toDt) {
       to:            toDt.toISOString(),
       readings,
       rolling_max:   rolling,
-      aep
+      aep,
+      mhlQcRejected: rainfallData.mhlQcRejected,
+      mhlQcTotal:    rainfallData.mhlQcTotal
     };
   } catch(e) {
     return null;
@@ -3670,6 +3700,9 @@ function renderResults(data, wx, rainToday) {
     </div>
     ${rm?.peak_start ? `<div style="font-size:11px;color:var(--text-l);margin-top:-4px;margin-bottom:12px">
       Peak window: <strong>${fmtDt(rm.peak_start)}</strong> -> <strong>${fmtDt(rm.peak_end)}</strong>
+    </div>` : ''}
+    ${data.mhlQcRejected !== undefined && data.mhlQcTotal !== undefined ? `<div style="font-size:11px;color:var(--text-l);margin-bottom:12px">
+      MHL QC: <strong>${data.mhlQcTotal - data.mhlQcRejected} of ${data.mhlQcTotal}</strong> readings accepted
     </div>` : ''}
     ${!rm || rm.reading_count === 0 ? '<div style="color:var(--text-l);font-size:13px;padding:20px 0;text-align:center">No rainfall data for this period.</div>' : ''}
   `;
@@ -4564,18 +4597,46 @@ function calcAEP(stationId, durationMinutes, depthMm) {
   // Above all thresholds â€" tail extrapolation beyond last column
   if (depthMm >= depths[depths.length - 1]) {
     const n = depths.length;
-    // Use log-linear slope from last two points (matches Excel 500â†’1000 method)
+    // Guard: probability must be a valid AEP fraction before computing ARI cap
+    if (probs[n-1] <= 0 || probs[n-1] >= 1) {
+      console.error('[calcAEP] Invalid probs[n-1]:', probs[n-1], '— cannot compute ARI cap');
+      return null;
+    }
+    const baselineSpan = Math.abs(Math.log(probs[n-2]) - Math.log(probs[n-1]));
+    const ONE_LOG_DECADE = Math.log(10);
+    // Refusal is intentional and conservative — refusing extrapolation is
+    // preferred over implying unsupported extreme-event precision.
+    if (baselineSpan < ONE_LOG_DECADE) {
+      return {
+        aep: `>${available[n-1]}`,
+        ari: null,
+        extrapolated: true,
+        extrapolation_refused: true,
+        tail_baseline: `${available[n-2]} → ${available[n-1]}`,
+        bracket_lower_aep: available[n-1],
+        ifd_reference: row,
+        interpretation: `Depth exceeds ${available[n-1]} IFD — extrapolation refused (baseline too short: ${available[n-2]} → ${available[n-1]})`,
+      };
+    }
+    const ariCap = Math.round(1 / (-Math.log(1 - probs[n-1])));
+    // Use log-linear slope from last two points (matches Excel 500→1000 method)
     const slope = (Math.log(probs[n-1]) - Math.log(probs[n-2])) / (depths[n-1] - depths[n-2]);
     const lnP   = Math.log(probs[n-1]) + slope * (depthMm - depths[n-1]);
-    const p     = Math.exp(lnP);
-    const pct   = Math.round(p * 100000) / 1000;  // 3 sig figs in %
-    const ari   = Math.round(1 / (-Math.log(1 - p)));
+    const p_raw = Math.exp(lnP);
+    // Cap: prevent extrapolated p from being rarer than last documented column.
+    // Verified: smaller p = rarer, Math.max enforces minimum rarity floor.
+    const p   = Math.max(p_raw, probs[n-1]);
+    const ari = Math.min(Math.round(1 / (-Math.log(1 - p))), ariCap);
+    const pct = Math.round(p * 100000) / 1000;
     return {
       aep: `~${pct}%`,
       ari,
+      ari_cap: ariCap,
+      extrapolated: true,
+      tail_baseline: `${available[n-2]} → ${available[n-1]}`,
       bracket_lower_aep: available[n-1],
       ifd_reference: row,
-      interpretation: `Extreme event - approximately 1 in ${ari.toLocaleString()} years`
+      interpretation: `Extreme event — approximately 1 in ${ari.toLocaleString()} years (depth exceeds documented IFD; ARI capped at 1 in ${ariCap.toLocaleString()})`,
     };
   }
 
@@ -5223,41 +5284,4 @@ function switchPage(page, options = {}) {
   showStormgaugePageShell(page);
 }
 
-function showStormgaugePageShell(page) {
-  currentPage = page;
-  PAGES.forEach(p => {
-    const el = document.getElementById('page-' + p);
-    if (!el) return;
-    el.style.display = p === page ? 'flex' : 'none';
-  });
-  document.getElementById('page-nav').style.display = page === 'home' ? 'none' : 'flex';
-  document.querySelectorAll('.pnav-btn[data-page]').forEach(button =>
-    button.classList.toggle('active', button.dataset.page === page));
-}
-
-function applyTheme(t) {
-  return window.uiTheme.applyTheme(t);
-}
-function toggleTheme() {
-  return window.uiTheme.toggleTheme();
-}
-
-function queueAtmosUiStartup() {
-  if (window.uiControls && window.uiTheme) {
-    window.uiControls.wireStartupControls(getUiControlDeps());
-    return;
-  }
-
-  window.addEventListener('atmos-modules-ready', () => window.uiControls.wireStartupControls(getUiControlDeps()), { once: true });
-}
-
-// Load Rainfall tool on startup; sync toggle button label from persisted pref
-document.addEventListener('DOMContentLoaded', () => {
-  queueAtmosUiStartup();
-});
-
-
-// init() is called lazily by switchPage('aep') on first visit
-</script>
-</body>
-</html>
+function showStormga
