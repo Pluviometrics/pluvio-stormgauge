@@ -19,7 +19,9 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
+import os
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -35,6 +37,7 @@ from urllib.request import Request, urlopen
 ROOT           = Path(__file__).resolve().parents[1]
 DEFAULT_INPUT  = ROOT / "data" / "pluviometrics_rainfall_stations.json"
 DEFAULT_OUTPUT = ROOT / "data" / "pluviometrics_ifd_table.json"
+MANIFEST_FILE  = ROOT / "data" / "ifd_manifest.json"
 CACHE_FILE     = ROOT / "data" / "pluviometrics_ifd_cache.json"
 ERROR_FILE     = ROOT / "data" / "pluviometrics_ifd_errors.json"
 BOM_IFD_JS     = ROOT / "bom_ifd_cache.js"
@@ -172,6 +175,35 @@ def save_json(path: Path, data: dict) -> None:
         json.dumps(data, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
+
+
+def write_ifd_manifest(output_path: Path) -> None:
+    """Compute SHA256 of the written IFD table file and write manifest."""
+    if not output_path.exists():
+        print(f"[manifest] output file not found: {output_path}", file=sys.stderr)
+        return
+    try:
+        file_bytes = output_path.read_bytes()
+        sha256_full = hashlib.sha256(file_bytes).hexdigest()
+        sha256_prefix = sha256_full[:12]
+        manifest = {
+            "schema_version": "stormgauge.ifd_manifest.v1",
+            "file": "pluviometrics_ifd_table.json",
+            "sha256": sha256_full,
+            "sha256_prefix": sha256_prefix,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "bytes": len(file_bytes),
+        }
+        tmp_path = MANIFEST_FILE.with_suffix(".json.tmp")
+        tmp_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path.write_text(
+            json.dumps(manifest, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        os.replace(str(tmp_path), str(MANIFEST_FILE))
+        print(f"Manifest written: {MANIFEST_FILE}")
+    except Exception as exc:
+        print(f"[manifest] WARNING: failed to write manifest: {exc}", file=sys.stderr)
 
 
 # ---------------------------------------------------------------------------
@@ -363,6 +395,9 @@ def main() -> int:
 
     save_json(args.output, output_payload)
     print(f"\nOutput written: {args.output}")
+
+    # Write IFD manifest (SHA256 + metadata)
+    write_ifd_manifest(args.output)
 
     # CSV export
     csv_path = args.output.with_suffix(".csv")

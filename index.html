@@ -10,12 +10,12 @@
 <title>Stormgauge Rainfall Analysis</title>
 <!-- v3 -->
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.2.0/dist/chartjs-plugin-zoom.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js" integrity="sha384-NElt3Op+9NBMCYaef5HxeJmU4Xeard/Lku8ek6hoPTvYkQPh3zLIrJP7KiRocsxO" crossorigin="anonymous"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js" integrity="sha384-bs/nf9FbdNouRbMiFcrcZfLXYPKiPaGVGplVbv7dLGECccEXDW+S3zjqSKR5ZEaD" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js" integrity="sha384-Cs3dgUx6+jDxxuqHvVH8Onpyj2LF1gKZurLDlhqzuJmUqVYMJ0THTWpxK5Z086Zm" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.2.0/dist/chartjs-plugin-zoom.min.js" integrity="sha384-dwwI6ICEN/0ZQlS5owhUa/6ZzvwUPmjH45bFVCAcjgjTulbHJvlE+TGU3g1k0N3R" crossorigin="anonymous"></script>
 <script>if(window.ChartZoom)Chart.register(window.ChartZoom);</script>
-<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js" integrity="sha384-ZZ1pncU3bQe8y31yfZdMFdSpttDoPmOZg2wguVK9almUodir1PghgT0eY7Mrty8H" crossorigin="anonymous"></script>
 <script src="./nsw_lga_boundaries.js"></script>
 <script src="./bom_northern_beaches_all_gauges.js"></script>
 <script src="./bom_ifd_cache.js"></script>
@@ -853,8 +853,9 @@ html[data-theme="dark"] ::-webkit-scrollbar-thumb:hover { background: #2A4060; }
 
 
 
-<script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx-js-style.browser.min.js"></script>
+<!-- SRI without crossorigin: cdn.sheetjs.com does not send CORS headers -->
+<script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js" integrity="sha384-gx12pQMMYnabkTgbCHqqrT65RwDnXI/f/dU2H9JUmT0KUeiMF5bf+yroQBmX0Nuk"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.min.js" integrity="sha384-TKzdYxq/t9UpLrJcIQu2hpfQg+oSoJVDkhWcS4zuzQmzQTBx5gSMhINXD2uGv0jw" crossorigin="anonymous"></script>
 <script type="module">
   import { buildExportModel }     from './src/modules/exports/buildExportModel.js';
   import { exportCSV }            from './src/modules/exports/exportCsv.js';
@@ -4457,12 +4458,42 @@ const ifdLoadPromises = {};
 const rainfallCache = {};
 const wxCache = {};
 
-// Enriched IFD table (data/pluviometrics_ifd_table.json) — loaded async at startup
-const _pluvIfdTablePromise = fetch(`./data/pluviometrics_ifd_table.json?v=${Date.now()}`, { cache: 'no-store' })
-  .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
-  .catch(e => { console.warn('[IFD] enriched table unavailable:', e.message); return null; });
+// Enriched IFD table (data/pluviometrics_ifd_table.json) — two-step load with manifest hash
+const _pluvIfdTablePromise = (async () => {
+  let sha256Prefix = `fallback-${Date.now()}`;
+  let manifestDate = null;
+
+  // Step 1: Fetch manifest (small file, fresh each load)
+  try {
+    const manifestR = await fetch('./data/ifd_manifest.json', { cache: 'no-store' });
+    if (manifestR.ok) {
+      const manifest = await manifestR.json();
+      sha256Prefix = manifest.sha256_prefix || sha256Prefix;
+      manifestDate = manifest.generated_at || null;
+    }
+  } catch (e) {
+    // Fall through to step 2 with fallback hash; don't log (manifest optional)
+  }
+
+  // Step 2: Fetch table using hash-stable or fallback URL (semantic cache key)
+  try {
+    const tableR = await fetch(`./data/pluviometrics_ifd_table.json?v=${sha256Prefix}`, { cache: 'force-cache' });
+    if (!tableR.ok) throw new Error(`HTTP ${tableR.status}`);
+    const table = await tableR.json();
+    // Store manifest info on diagnostic object
+    _ifdDiag.manifestHash = sha256Prefix;
+    _ifdDiag.manifestDate = manifestDate;
+    return table;
+  } catch (e) {
+    console.warn('[IFD] enriched table unavailable:', e.message);
+    _ifdDiag.manifestHash = 'unavailable';
+    _ifdDiag.manifestDate = null;
+    return null;
+  }
+})();
+
 let _pluvIfdTable = null;
-const _ifdDiag = { tableEntries: 0, newTable: 0, legacyBom: 0, legacyMhl: 0, missing: 0 };
+const _ifdDiag = { tableEntries: 0, newTable: 0, legacyBom: 0, legacyMhl: 0, missing: 0, manifestHash: null, manifestDate: null };
 
 function loadStationIfd(station) {
   if (!station?.station_id) return Promise.resolve(null);
@@ -4522,6 +4553,7 @@ async function loadIfdData() {
   } else {
     console.warn('[IFD] enriched table not available — falling back to BOM_IFD_CACHE + live MHL API');
   }
+  console.info(`[IFD] table loaded — hash=${_ifdDiag.manifestHash} generated=${_ifdDiag.manifestDate}`);
 
   const BATCH = 20;
   for (let i = 0; i < allStations.length; i += BATCH) {
