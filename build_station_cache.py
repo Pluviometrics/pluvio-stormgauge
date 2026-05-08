@@ -198,8 +198,24 @@ def find_rainfall_ts_id(station_id):
         else:
             priority = 3
 
-        if priority < best_priority:
-            best_priority = priority
+        # Suffix tiebreaker — within a priority class, prefer .P (automatic
+        # pluviometer) over .O (manual observer). This matches the post-hoc
+        # fix codified in fixtsid.py; embedding it here means future cache
+        # rebuilds emit .P directly and fixtsid.py becomes unnecessary.
+        suffix_ref = (r.get("ts_name", "") + r.get("ts_shortname", "")).upper()
+        if   ".P" in suffix_ref: suffix_penalty = 0   # pluviometer / automatic — best
+        elif ".D" in suffix_ref: suffix_penalty = 1
+        elif ".R" in suffix_ref: suffix_penalty = 2
+        elif ".C" in suffix_ref: suffix_penalty = 3
+        elif ".O" in suffix_ref: suffix_penalty = 9   # observer / manual — strongly de-prioritised
+        else:                    suffix_penalty = 5
+
+        # Combined score: priority class is the dominant ordering, suffix
+        # is the tiebreaker. Lower wins.
+        score = priority * 100 + suffix_penalty
+
+        if score < best_priority:
+            best_priority = score
             best_ts_id    = r.get("ts_id")
             best_ts_name  = r.get("ts_name")
 
