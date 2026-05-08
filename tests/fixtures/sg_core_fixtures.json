@@ -1,0 +1,168 @@
+{
+  "calcAEP_cases": [
+    {
+      "name": "calcAEP_interpolation_between_columns",
+      "description": "Observed depth falls between two IFD columns - tests log-linear interpolation",
+      "stationId": "test_station_001",
+      "durationMinutes": 60,
+      "ifd": {
+        "60": {
+          "63.2%": 10,
+          "50%": 15,
+          "20%": 25,
+          "10%": 35,
+          "5%": 45,
+          "2%": 60,
+          "1%": 80,
+          "1 in 200": 100,
+          "1 in 500": 120,
+          "1 in 1000": 140
+        }
+      },
+      "depthMm": 70,
+      "notes": "IFD columns: 2%=60mm, 1%=80mm. Observed 70mm is between them. Interpolation: frac=(70-60)/(80-60)=0.5. lnA=ln(0.02)=-3.912, lnB=ln(0.01)=-4.605. lnP=-3.912+0.5*(-0.693)=-4.2585. p=0.01414. pct=1.414%. ari=70.",
+      "expected": {
+        "aep": "~1.414%",
+        "ari": 70,
+        "bracket_lower_aep": "2%",
+        "bracket_upper_aep": "1%",
+        "interpretation": "Extreme event - approximately 1 in 70 years"
+      }
+    },
+    {
+      "name": "calcAEP_extrapolation_beyond_max",
+      "description": "Observed depth exceeds largest IFD column - tests log-linear tail extrapolation",
+      "stationId": "test_station_002",
+      "durationMinutes": 60,
+      "ifd": {
+        "60": {
+          "63.2%": 10,
+          "50%": 15,
+          "20%": 25,
+          "10%": 35,
+          "5%": 45,
+          "2%": 60,
+          "1%": 80,
+          "1 in 200": 100,
+          "1 in 500": 120,
+          "1 in 1000": 140
+        }
+      },
+      "depthMm": 160,
+      "notes": "Observed 160mm exceeds max column 1 in 1000=140mm. Uses slope from 1 in 500 (120mm) to 1 in 1000 (140mm). slope=-0.03463. lnP=-7.601. p=0.0005. pct=0.05%. ari=2000.",
+      "expected": {
+        "aep": "~0.05%",
+        "ari": 2000,
+        "bracket_lower_aep": "1 in 1000",
+        "interpretation": "Extreme event - approximately 1 in 2000 years"
+      }
+    },
+    {
+      "name": "calcAEP_exact_boundary",
+      "description": "Observed depth exactly matches an IFD column boundary",
+      "stationId": "test_station_003",
+      "durationMinutes": 60,
+      "ifd": {
+        "60": {
+          "63.2%": 10,
+          "50%": 15,
+          "20%": 25,
+          "10%": 35,
+          "5%": 45,
+          "2%": 60,
+          "1%": 80,
+          "1 in 200": 100,
+          "1 in 500": 120,
+          "1 in 1000": 140
+        }
+      },
+      "depthMm": 100,
+      "notes": "Observed 100mm exactly matches 1 in 200 column. No interpolation. p=1-exp(-1/200)=0.00498752. pct=0.499%. ari=200.",
+      "expected": {
+        "aep": "~0.499%",
+        "ari": 200,
+        "bracket_lower_aep": "1%",
+        "bracket_upper_aep": "1 in 200",
+        "interpretation": "Extreme event - approximately 1 in 200 years"
+      }
+    }
+  ],
+  "calcRollingMax_cases": [
+    {
+      "name": "calcRollingMax_clear_peak",
+      "description": "5-minute reading series with one unambiguous peak - tests sliding window max",
+      "durationMinutes": 30,
+      "intervalMinutes": 5,
+      "notes": "Window size: floor(30/5)=6. Series: [1,1,1,5,5,5,1,1,1,1,1,2,2,2]. Peak window at indices [0:6] sum=18mm. Total=29mm.",
+      "readings": [
+        { "timestamp": "2026-01-01T00:00:00Z", "value": 1 },
+        { "timestamp": "2026-01-01T00:05:00Z", "value": 1 },
+        { "timestamp": "2026-01-01T00:10:00Z", "value": 1 },
+        { "timestamp": "2026-01-01T00:15:00Z", "value": 5 },
+        { "timestamp": "2026-01-01T00:20:00Z", "value": 5 },
+        { "timestamp": "2026-01-01T00:25:00Z", "value": 5 },
+        { "timestamp": "2026-01-01T00:30:00Z", "value": 1 },
+        { "timestamp": "2026-01-01T00:35:00Z", "value": 1 },
+        { "timestamp": "2026-01-01T00:40:00Z", "value": 1 },
+        { "timestamp": "2026-01-01T00:45:00Z", "value": 1 },
+        { "timestamp": "2026-01-01T00:50:00Z", "value": 1 },
+        { "timestamp": "2026-01-01T00:55:00Z", "value": 2 },
+        { "timestamp": "2026-01-01T01:00:00Z", "value": 2 },
+        { "timestamp": "2026-01-01T01:05:00Z", "value": 2 }
+      ],
+      "expected": {
+        "max_depth_mm": 18,
+        "peak_start": "2026-01-01T00:00:00Z",
+        "peak_end": "2026-01-01T00:25:00Z",
+        "total_depth_mm": 29,
+        "reading_count": 14
+      }
+    },
+    {
+      "name": "calcRollingMax_uniform_series",
+      "description": "All readings equal - tests rolling max on uniform data",
+      "durationMinutes": 20,
+      "intervalMinutes": 5,
+      "notes": "Window size: floor(20/5)=4. Series: [3,3,3,3,3,3,3,3]. Every window sums to 12mm. First window peak at [0:4]. Total=24mm.",
+      "readings": [
+        { "timestamp": "2026-01-01T00:00:00Z", "value": 3 },
+        { "timestamp": "2026-01-01T00:05:00Z", "value": 3 },
+        { "timestamp": "2026-01-01T00:10:00Z", "value": 3 },
+        { "timestamp": "2026-01-01T00:15:00Z", "value": 3 },
+        { "timestamp": "2026-01-01T00:20:00Z", "value": 3 },
+        { "timestamp": "2026-01-01T00:25:00Z", "value": 3 },
+        { "timestamp": "2026-01-01T00:30:00Z", "value": 3 },
+        { "timestamp": "2026-01-01T00:35:00Z", "value": 3 }
+      ],
+      "expected": {
+        "max_depth_mm": 12,
+        "peak_start": "2026-01-01T00:00:00Z",
+        "peak_end": "2026-01-01T00:15:00Z",
+        "total_depth_mm": 24,
+        "reading_count": 8
+      }
+    },
+    {
+      "name": "calcRollingMax_end_peak",
+      "description": "Peak at final valid rolling-window position",
+      "durationMinutes": 15,
+      "intervalMinutes": 5,
+      "notes": "Window size: floor(15/5)=3. Series: [1,1,1,2,2,2]. Windows: [0:3]=3, [1:4]=4, [2:5]=5, [3:6]=6. Peak at final window [3:6]. Total=9mm.",
+      "readings": [
+        { "timestamp": "2026-01-01T00:00:00Z", "value": 1 },
+        { "timestamp": "2026-01-01T00:05:00Z", "value": 1 },
+        { "timestamp": "2026-01-01T00:10:00Z", "value": 1 },
+        { "timestamp": "2026-01-01T00:15:00Z", "value": 2 },
+        { "timestamp": "2026-01-01T00:20:00Z", "value": 2 },
+        { "timestamp": "2026-01-01T00:25:00Z", "value": 2 }
+      ],
+      "expected": {
+        "max_depth_mm": 6,
+        "peak_start": "2026-01-01T00:15:00Z",
+        "peak_end": "2026-01-01T00:25:00Z",
+        "total_depth_mm": 9,
+        "reading_count": 6
+      }
+    }
+  ]
+}
