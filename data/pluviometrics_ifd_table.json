@@ -1,6 +1,6 @@
 {
   "generated_at": "2026-04-26T23:16:40.238727+00:00",
-  "source_input": "C:\\Users\\fonzi\\Weather App Folder\\data\\pluviometrics_rainfall_stations.json",
+  "source_input": "data/pluviometrics_rainfall_stations.json",
   "station_count_input": 1394,
   "enriched_count": 1388,
   "error_count": 6,
