@@ -1,0 +1,237 @@
+{
+  "_description": "Golden output of calcAEP for synthetic IFD + 12 bracket scenarios.",
+  "_fixture": "aep_test_inputs.json",
+  "_function": "window.calcAEP (defined in index.html inline monolith, ~line 4600)",
+  "test_cases": {
+    "zero_depth": {
+      "input": {
+        "duration": 60,
+        "depth_mm": 0,
+        "station_id": "test-aep-001"
+      },
+      "output": {
+        "aep": ">63.2%",
+        "interpretation": "Very frequent - less than 2-year ARI"
+      }
+    },
+    "below_all_thresholds": {
+      "input": {
+        "duration": 60,
+        "depth_mm": 4,
+        "station_id": "test-aep-001"
+      },
+      "output": {
+        "aep": ">63.2%",
+        "bracket_upper_aep": "63.2%",
+        "ifd_reference": {
+          "63.2%": 6,
+          "50%": 8,
+          "20%": 12,
+          "10%": 16,
+          "5%": 22,
+          "2%": 28,
+          "1%": 34
+        },
+        "interpretation": "Very frequent - less than 2-year ARI"
+      }
+    },
+    "exact_50pct": {
+      "input": {
+        "duration": 60,
+        "depth_mm": 8,
+        "station_id": "test-aep-001"
+      },
+      "output": {
+        "aep": "~50%",
+        "ari": 1,
+        "bracket_lower_aep": "50%",
+        "bracket_upper_aep": "20%",
+        "ifd_reference": {
+          "63.2%": 6,
+          "50%": 8,
+          "20%": 12,
+          "10%": 16,
+          "5%": 22,
+          "2%": 28,
+          "1%": 34
+        },
+        "interpretation": "Frequent â€\" approximately 1 in 1 years"
+      }
+    },
+    "mid_bracket_50_to_20": {
+      "input": {
+        "duration": 60,
+        "depth_mm": 10,
+        "station_id": "test-aep-001"
+      },
+      "output": {
+        "aep": "~31.623%",
+        "ari": 3,
+        "bracket_lower_aep": "50%",
+        "bracket_upper_aep": "20%",
+        "ifd_reference": {
+          "63.2%": 6,
+          "50%": 8,
+          "20%": 12,
+          "10%": 16,
+          "5%": 22,
+          "2%": 28,
+          "1%": 34
+        },
+        "interpretation": "Frequent â€\" approximately 1 in 3 years"
+      }
+    },
+    "exact_20pct": {
+      "input": {
+        "duration": 60,
+        "depth_mm": 12,
+        "station_id": "test-aep-001"
+      },
+      "output": {
+        "aep": "~20%",
+        "ari": 4,
+        "bracket_lower_aep": "20%",
+        "bracket_upper_aep": "10%",
+        "ifd_reference": {
+          "63.2%": 6,
+          "50%": 8,
+          "20%": 12,
+          "10%": 16,
+          "5%": 22,
+          "2%": 28,
+          "1%": 34
+        },
+        "interpretation": "Moderate â€\" approximately 1 in 4 years"
+      }
+    },
+    "mid_bracket_5_to_2": {
+      "input": {
+        "duration": 60,
+        "depth_mm": 25,
+        "station_id": "test-aep-001"
+      },
+      "output": {
+        "aep": "~3.162%",
+        "ari": 31,
+        "bracket_lower_aep": "5%",
+        "bracket_upper_aep": "2%",
+        "ifd_reference": {
+          "63.2%": 6,
+          "50%": 8,
+          "20%": 12,
+          "10%": 16,
+          "5%": 22,
+          "2%": 28,
+          "1%": 34
+        },
+        "interpretation": "Rare â€\" approximately 1 in 31 years"
+      }
+    },
+    "above_all_thresholds": {
+      "input": {
+        "duration": 60,
+        "depth_mm": 50,
+        "station_id": "test-aep-001"
+      },
+      "output": {
+        "aep": "~0.157%",
+        "ari": 634,
+        "bracket_lower_aep": "1%",
+        "ifd_reference": {
+          "63.2%": 6,
+          "50%": 8,
+          "20%": 12,
+          "10%": 16,
+          "5%": 22,
+          "2%": 28,
+          "1%": 34
+        },
+        "interpretation": "Extreme event - approximately 1 in 634 years"
+      }
+    },
+    "extreme_above_thresholds": {
+      "input": {
+        "duration": 60,
+        "depth_mm": 100,
+        "station_id": "test-aep-001"
+      },
+      "output": {
+        "aep": "~0%",
+        "ari": 204799,
+        "bracket_lower_aep": "1%",
+        "ifd_reference": {
+          "63.2%": 6,
+          "50%": 8,
+          "20%": 12,
+          "10%": 16,
+          "5%": 22,
+          "2%": 28,
+          "1%": 34
+        },
+        "interpretation": "Extreme event - approximately 1 in 204,799 years"
+      }
+    },
+    "different_duration_15min": {
+      "input": {
+        "duration": 15,
+        "depth_mm": 10,
+        "station_id": "test-aep-001"
+      },
+      "output": {
+        "aep": "~6.3%",
+        "ari": 15,
+        "bracket_lower_aep": "10%",
+        "bracket_upper_aep": "5%",
+        "ifd_reference": {
+          "63.2%": 3,
+          "50%": 4,
+          "20%": 6,
+          "10%": 8,
+          "5%": 11,
+          "2%": 14,
+          "1%": 17
+        },
+        "interpretation": "Significant â€\" approximately 1 in 15 years"
+      }
+    },
+    "long_duration_24h": {
+      "input": {
+        "duration": 1440,
+        "depth_mm": 100,
+        "station_id": "test-aep-001"
+      },
+      "output": {
+        "aep": "~6.3%",
+        "ari": 15,
+        "bracket_lower_aep": "10%",
+        "bracket_upper_aep": "5%",
+        "ifd_reference": {
+          "63.2%": 30,
+          "50%": 40,
+          "20%": 60,
+          "10%": 80,
+          "5%": 110,
+          "2%": 140,
+          "1%": 170
+        },
+        "interpretation": "Significant â€\" approximately 1 in 15 years"
+      }
+    },
+    "missing_duration": {
+      "input": {
+        "duration": 120,
+        "depth_mm": 10,
+        "station_id": "test-aep-001"
+      },
+      "output": null
+    },
+    "missing_station": {
+      "input": {
+        "duration": 60,
+        "depth_mm": 10,
+        "station_id": "no-such-station"
+      },
+      "output": null
+    }
+  }
+}

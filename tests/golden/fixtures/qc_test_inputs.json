@@ -1,0 +1,122 @@
+{
+  "_description": "Synthetic rainfall series + BOM cumulative series for the QC functions: applyRainfallQc, applyBomQc, _isBomCumulative, _bomCumulativeToIncrements.",
+  "test_cases": {
+    "mhl_qc_normal_series": {
+      "_function": "applyRainfallQc",
+      "intervalMinutes": 5,
+      "stationName": "Test MHL Station",
+      "readings": [
+        {"timestamp": "2025-01-01T00:00:00Z", "value": 0.5},
+        {"timestamp": "2025-01-01T00:05:00Z", "value": 1.2},
+        {"timestamp": "2025-01-01T00:10:00Z", "value": 0.8},
+        {"timestamp": "2025-01-01T00:15:00Z", "value": 0.0}
+      ],
+      "expected_meta": "Stub returns input unchanged"
+    },
+    "mhl_qc_isolated_spike": {
+      "_function": "applyRainfallQc",
+      "intervalMinutes": 5,
+      "stationName": "Test MHL Station",
+      "readings": [
+        {"timestamp": "2025-01-01T00:00:00Z", "value": 0.5},
+        {"timestamp": "2025-01-01T00:05:00Z", "value": 250.0},
+        {"timestamp": "2025-01-01T00:10:00Z", "value": 0.5}
+      ],
+      "expected_meta": "Stub logs warning but does NOT reject. Returns input unchanged."
+    },
+    "mhl_qc_short_series": {
+      "_function": "applyRainfallQc",
+      "intervalMinutes": 5,
+      "stationName": "Test MHL Station",
+      "readings": [{"timestamp": "2025-01-01T00:00:00Z", "value": 1.0}],
+      "expected_meta": "<3 readings: returns input unchanged immediately"
+    },
+    "bom_qc_normal_series": {
+      "_function": "applyBomQc",
+      "intervalMinutes": 5,
+      "stationName": "Test BOM Station",
+      "bomId": "999999",
+      "readings": [
+        {"timestamp": "2025-01-01T00:00:00Z", "value": 0.5},
+        {"timestamp": "2025-01-01T00:05:00Z", "value": 1.2},
+        {"timestamp": "2025-01-01T00:10:00Z", "value": 0.8}
+      ],
+      "expected_meta": "All accepted"
+    },
+    "bom_qc_invalid_values": {
+      "_function": "applyBomQc",
+      "intervalMinutes": 5,
+      "stationName": "Test BOM Station",
+      "bomId": "999999",
+      "readings": [
+        {"timestamp": "2025-01-01T00:00:00Z", "value": 0.5},
+        {"timestamp": "2025-01-01T00:05:00Z", "value": -3.0},
+        {"timestamp": "2025-01-01T00:10:00Z", "value": 1.0}
+      ],
+      "expected_meta": "Negative value rejected"
+    },
+    "bom_qc_isolated_spike": {
+      "_function": "applyBomQc",
+      "intervalMinutes": 5,
+      "stationName": "Test BOM Station",
+      "bomId": "999999",
+      "readings": [
+        {"timestamp": "2025-01-01T00:00:00Z", "value": 0.5},
+        {"timestamp": "2025-01-01T00:05:00Z", "value": 0.5},
+        {"timestamp": "2025-01-01T00:10:00Z", "value": 250.0},
+        {"timestamp": "2025-01-01T00:15:00Z", "value": 0.5},
+        {"timestamp": "2025-01-01T00:20:00Z", "value": 0.5}
+      ],
+      "expected_meta": "Spike at index 2 rejected (>10x neighbor max AND >20mm)"
+    },
+    "bom_qc_empty": {
+      "_function": "applyBomQc",
+      "intervalMinutes": 5,
+      "stationName": "Test BOM Station",
+      "bomId": "999999",
+      "readings": [],
+      "expected_meta": "Empty series: empty cleaned + rejected"
+    },
+    "is_cumulative_strictly_increasing": {
+      "_function": "_isBomCumulative",
+      "readings": [
+        {"timestamp": "2025-01-01T00:00:00Z", "value": 0.0},
+        {"timestamp": "2025-01-01T00:05:00Z", "value": 0.5},
+        {"timestamp": "2025-01-01T00:10:00Z", "value": 1.2},
+        {"timestamp": "2025-01-01T00:15:00Z", "value": 1.2},
+        {"timestamp": "2025-01-01T00:20:00Z", "value": 2.5},
+        {"timestamp": "2025-01-01T00:25:00Z", "value": 3.0},
+        {"timestamp": "2025-01-01T00:30:00Z", "value": 3.0},
+        {"timestamp": "2025-01-01T00:35:00Z", "value": 4.1}
+      ],
+      "expected_meta": "Mostly up, no down -> true"
+    },
+    "is_cumulative_interval_pattern": {
+      "_function": "_isBomCumulative",
+      "readings": [
+        {"timestamp": "2025-01-01T00:00:00Z", "value": 0.0},
+        {"timestamp": "2025-01-01T00:05:00Z", "value": 1.5},
+        {"timestamp": "2025-01-01T00:10:00Z", "value": 0.0},
+        {"timestamp": "2025-01-01T00:15:00Z", "value": 2.0},
+        {"timestamp": "2025-01-01T00:20:00Z", "value": 0.0},
+        {"timestamp": "2025-01-01T00:25:00Z", "value": 0.5},
+        {"timestamp": "2025-01-01T00:30:00Z", "value": 0.0},
+        {"timestamp": "2025-01-01T00:35:00Z", "value": 0.8}
+      ],
+      "expected_meta": "Many drops -> false (interval shape)"
+    },
+    "cumulative_to_increments_basic": {
+      "_function": "_bomCumulativeToIncrements",
+      "stationName": "Test BOM Cumulative",
+      "bomId": "111222",
+      "readings": [
+        {"timestamp": "2025-01-01T00:00:00Z", "value": 0.0},
+        {"timestamp": "2025-01-01T00:05:00Z", "value": 0.5},
+        {"timestamp": "2025-01-01T00:10:00Z", "value": 1.2},
+        {"timestamp": "2025-01-01T00:15:00Z", "value": 0.8},
+        {"timestamp": "2025-01-01T00:20:00Z", "value": 2.0}
+      ],
+      "expected_meta": "Negative diff (1.2 -> 0.8) discarded; first reading skipped"
+    }
+  }
+}

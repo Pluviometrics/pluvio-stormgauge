@@ -1,0 +1,147 @@
+{
+  "_description": "Golden output of export helpers (csvEscape, csvRow, csvSlug).",
+  "_module": "src/modules/exports/exportHelpers.js",
+  "csv_escape": [
+    {
+      "label": "plain string",
+      "input": "plain string",
+      "output": "plain string"
+    },
+    {
+      "label": "comma",
+      "input": "has, comma",
+      "output": "\"has, comma\""
+    },
+    {
+      "label": "quote",
+      "input": "has \"quote",
+      "output": "\"has \"\"quote\""
+    },
+    {
+      "label": "newline",
+      "input": "has\nnewline",
+      "output": "\"has\nnewline\""
+    },
+    {
+      "label": "crlf",
+      "input": "has\r\ncrlf",
+      "output": "\"has\r\ncrlf\""
+    },
+    {
+      "label": "null",
+      "input": null,
+      "output": ""
+    },
+    {
+      "label": "undefined",
+      "output": ""
+    },
+    {
+      "label": "number",
+      "input": 42,
+      "output": "42"
+    },
+    {
+      "label": "empty",
+      "input": "",
+      "output": ""
+    },
+    {
+      "label": "whitespace",
+      "input": "   ",
+      "output": "   "
+    },
+    {
+      "label": "pre-quoted",
+      "input": "\"already quoted\"",
+      "output": "\"\"\"already quoted\"\"\""
+    },
+    {
+      "label": "all-edge",
+      "input": "a,b\n\"c\n\"d",
+      "output": "\"a,b\n\"\"c\n\"\"d\""
+    }
+  ],
+  "csv_row": [
+    {
+      "label": "simple",
+      "input": [
+        "a",
+        "b",
+        "c"
+      ],
+      "output": "a,b,c\n"
+    },
+    {
+      "label": "mixed-escapes",
+      "input": [
+        "has,comma",
+        "plain",
+        "has\"quote"
+      ],
+      "output": "\"has,comma\",plain,\"has\"\"quote\"\n"
+    },
+    {
+      "label": "numeric-and-null",
+      "input": [
+        1,
+        2,
+        3.14,
+        null
+      ],
+      "output": "1,2,3.14,\n"
+    },
+    {
+      "label": "empty-row",
+      "input": [],
+      "output": "\n"
+    }
+  ],
+  "csv_slug": [
+    {
+      "label": "simple",
+      "input": "Hello World",
+      "output": "hello-world"
+    },
+    {
+      "label": "station-name-with-numbers",
+      "input": "BoM Station 067114",
+      "output": "bom-station-067114"
+    },
+    {
+      "label": "parens-and-caps",
+      "input": "SYDNEY (OBSERVATORY HILL)",
+      "output": "sydney-observatory-hill"
+    },
+    {
+      "label": "leading-trailing-whitespace",
+      "input": "  trim me  ",
+      "output": "trim-me"
+    },
+    {
+      "label": "collapse-dashes",
+      "input": "multiple --- dashes",
+      "output": "multiple-dashes"
+    },
+    {
+      "label": "non-ascii",
+      "input": "unicode é à ñ",
+      "output": "unicode"
+    },
+    {
+      "label": "empty",
+      "input": "",
+      "output": "unknown"
+    },
+    {
+      "label": "null-input",
+      "input": null,
+      "output": "unknown"
+    },
+    {
+      "label": "all-dashes",
+      "input": "---",
+      "output": "unknown"
+    }
+  ]
+}

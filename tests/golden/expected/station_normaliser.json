@@ -1,0 +1,182 @@
+{
+  "_description": "Golden output of normaliseConsolidatedRainfallStation across source / type / coords scenarios.",
+  "_module": "src/modules/stations/stationLoader.js",
+  "_function": "normaliseConsolidatedRainfallStation",
+  "_ctx_summary": "synthetic ctx with bomIfdCache for one lat/lon, getBomStationNumber, getBomIfdKey, formatLgaBoundaryName",
+  "test_cases": {
+    "mhl_normal": {
+      "input": {
+        "station_id": "mhl-12345",
+        "station_type": "rainfall",
+        "source": "mhl",
+        "station_name": "TEST MHL Station",
+        "station_no": "TEST-001",
+        "lat": -33.81,
+        "lon": 151,
+        "ts_id": "12345",
+        "data_identifier": "mhl:12345"
+      },
+      "output": {
+        "station_id": "mhl-12345",
+        "station_type": "rainfall",
+        "source": "mhl",
+        "station_name": "TEST MHL Station",
+        "station_no": "TEST-001",
+        "lat": -33.81,
+        "lon": 151,
+        "ts_id": "12345",
+        "data_identifier": "mhl:12345",
+        "active": true,
+        "name": "TEST MHL Station"
+      }
+    },
+    "bom_with_ifd_match": {
+      "input": {
+        "station_id": "bom-067114",
+        "station_type": "rainfall",
+        "source": "bom",
+        "station_name": "TEST BOM 1",
+        "bom_id": "067114",
+        "lat": -33.85,
+        "lon": 151.2,
+        "element": "Rainfall",
+        "data_identifier": "bom:067114"
+      },
+      "output": {
+        "station_id": "bom-067114",
+        "station_type": "rainfall",
+        "source": "bom",
+        "station_name": "TEST BOM 1",
+        "bom_id": "067114",
+        "lat": -33.85,
+        "lon": 151.2,
+        "element": "Rainfall",
+        "data_identifier": "bom:067114",
+        "isBomGauge": true,
+        "active": true,
+        "ts_id": null,
+        "site": "067114",
+        "name": "TEST BOM 1",
+        "baseName": "TEST BOM 1",
+        "sourceLayer": "",
+        "lga": "",
+        "ifdKey": "-33.85000,151.20000",
+        "has_ifd": true
+      }
+    },
+    "bom_without_ifd_match": {
+      "input": {
+        "station_id": "bom-099999",
+        "station_type": "rainfall",
+        "source": "bom",
+        "station_name": "TEST BOM 2",
+        "bom_id": "099999",
+        "lat": -34.5,
+        "lon": 150.5,
+        "element": "Rainfall",
+        "data_identifier": "bom:099999"
+      },
+      "output": {
+        "station_id": "bom-099999",
+        "station_type": "rainfall",
+        "source": "bom",
+        "station_name": "TEST BOM 2",
+        "bom_id": "099999",
+        "lat": -34.5,
+        "lon": 150.5,
+        "element": "Rainfall",
+        "data_identifier": "bom:099999",
+        "isBomGauge": true,
+        "active": true,
+        "ts_id": null,
+        "site": "099999",
+        "name": "TEST BOM 2",
+        "baseName": "TEST BOM 2",
+        "sourceLayer": "",
+        "lga": "",
+        "ifdKey": "-34.50000,150.50000",
+        "has_ifd": false
+      }
+    },
+    "missing_coords_returns_null": {
+      "input": {
+        "station_id": "mhl-bad",
+        "station_type": "rainfall",
+        "source": "mhl",
+        "station_name": "X",
+        "lat": null,
+        "lon": null
+      },
+      "output": {
+        "station_id": "mhl-bad",
+        "station_type": "rainfall",
+        "source": "mhl",
+        "station_name": "X",
+        "lat": 0,
+        "lon": 0,
+        "active": true,
+        "station_no": "",
+        "ts_id": null,
+        "name": "X"
+      }
+    },
+    "invalid_lat_string_returns_null": {
+      "input": {
+        "station_id": "mhl-bad2",
+        "station_type": "rainfall",
+        "source": "mhl",
+        "station_name": "X",
+        "lat": "not-a-number",
+        "lon": 151
+      },
+      "output": null
+    },
+    "wrong_station_type_returns_null": {
+      "input": {
+        "station_id": "mhl-water",
+        "station_type": "water_level",
+        "source": "mhl",
+        "station_name": "X",
+        "lat": -33,
+        "lon": 151
+      },
+      "output": null
+    },
+    "unknown_source_returns_null": {
+      "input": {
+        "station_id": "unknown",
+        "station_type": "rainfall",
+        "source": "satellite",
+        "station_name": "X",
+        "lat": -33,
+        "lon": 151
+      },
+      "output": null
+    },
+    "mhl_data_identifier_fallback_for_ts_id": {
+      "input": {
+        "station_id": "mhl-fb",
+        "station_type": "rainfall",
+        "source": "mhl",
+        "station_name": "MHL Fallback",
+        "station_no": "FB-1",
+        "lat": -33.5,
+        "lon": 151.5,
+        "data_identifier": "mhl:67890"
+      },
+      "output": {
+        "station_id": "mhl-fb",
+        "station_type": "rainfall",
+        "source": "mhl",
+        "station_name": "MHL Fallback",
+        "station_no": "FB-1",
+        "lat": -33.5,
+        "lon": 151.5,
+        "data_identifier": "mhl:67890",
+        "active": true,
+        "ts_id": "67890",
+        "name": "MHL Fallback"
+      }
+    }
+  }
+}

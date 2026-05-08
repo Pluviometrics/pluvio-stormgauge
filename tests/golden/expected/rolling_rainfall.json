@@ -1,0 +1,96 @@
+{
+  "_description": "Golden output of calcRollingMax for fixed fixture + edge cases.",
+  "_fixture": "rainfall_series_synthetic_7d.json",
+  "_function": "window.calcRollingMax (defined in index.html inline monolith, ~line 2740)",
+  "rolling_windows": {
+    "5min": {
+      "max_depth_mm": 8,
+      "peak_start": "2025-01-09T14:20:00Z",
+      "peak_end": "2025-01-09T14:20:00Z",
+      "total_depth_mm": 129.1,
+      "reading_count": 2016
+    },
+    "30min": {
+      "max_depth_mm": 40,
+      "peak_start": "2025-01-09T14:10:00Z",
+      "peak_end": "2025-01-09T14:35:00Z",
+      "total_depth_mm": 129.1,
+      "reading_count": 2016
+    },
+    "1h": {
+      "max_depth_mm": 50.5,
+      "peak_start": "2025-01-09T14:00:00Z",
+      "peak_end": "2025-01-09T14:55:00Z",
+      "total_depth_mm": 129.1,
+      "reading_count": 2016
+    },
+    "6h": {
+      "max_depth_mm": 54.1,
+      "peak_start": "2025-01-09T11:00:00Z",
+      "peak_end": "2025-01-09T16:55:00Z",
+      "total_depth_mm": 129.1,
+      "reading_count": 2016
+    },
+    "24h": {
+      "max_depth_mm": 105.7,
+      "peak_start": "2025-01-09T14:00:00Z",
+      "peak_end": "2025-01-10T13:55:00Z",
+      "total_depth_mm": 129.1,
+      "reading_count": 2016
+    },
+    "72h": {
+      "max_depth_mm": 111.7,
+      "peak_start": "2025-01-07T12:00:00Z",
+      "peak_end": "2025-01-10T11:55:00Z",
+      "total_depth_mm": 129.1,
+      "reading_count": 2016
+    },
+    "168h": {
+      "max_depth_mm": 129.1,
+      "peak_start": "2025-01-06T00:00:00Z",
+      "peak_end": "2025-01-12T23:55:00Z",
+      "total_depth_mm": 129.1,
+      "reading_count": 2016
+    }
+  },
+  "edge_cases": {
+    "empty_array": {
+      "result": null,
+      "expected_meta": "must return null"
+    },
+    "all_zero": {
+      "result": {
+        "max_depth_mm": 0,
+        "peak_start": null,
+        "peak_end": null,
+        "total_depth_mm": 0,
+        "reading_count": 12
+      },
+      "expected_meta": "must return zeroes (no division by anything)"
+    },
+    "duration_exceeds_data": {
+      "result": {
+        "max_depth_mm": 0,
+        "peak_start": null,
+        "peak_end": null,
+        "total_depth_mm": 10,
+        "reading_count": 2
+      },
+      "expected_meta": "count > readings.length — should still produce a result or null"
+    },
+    "count_less_than_one": {
+      "result": null,
+      "expected_meta": "count < 1 — should return null"
+    },
+    "non_finite_values_NaN": {
+      "result": {
+        "max_depth_mm": 0,
+        "peak_start": null,
+        "peak_end": null,
+        "total_depth_mm": "__nonfinite_NaN__",
+        "reading_count": 3
+      },
+      "expected_meta": "NaN propagates through sum — capture observed behaviour"
+    }
+  }
+}

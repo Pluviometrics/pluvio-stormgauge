@@ -1,0 +1,169 @@
+{
+  "_description": "Golden output of the four protected QC functions.",
+  "_fixture": "qc_test_inputs.json",
+  "_functions": [
+    "applyRainfallQc",
+    "applyBomQc",
+    "_isBomCumulative",
+    "_bomCumulativeToIncrements"
+  ],
+  "test_cases": {
+    "mhl_qc_normal_series": {
+      "_function": "applyRainfallQc",
+      "output": [
+        {
+          "timestamp": "2025-01-01T00:00:00Z",
+          "value": 0.5
+        },
+        {
+          "timestamp": "2025-01-01T00:05:00Z",
+          "value": 1.2
+        },
+        {
+          "timestamp": "2025-01-01T00:10:00Z",
+          "value": 0.8
+        },
+        {
+          "timestamp": "2025-01-01T00:15:00Z",
+          "value": 0
+        }
+      ]
+    },
+    "mhl_qc_isolated_spike": {
+      "_function": "applyRainfallQc",
+      "output": [
+        {
+          "timestamp": "2025-01-01T00:00:00Z",
+          "value": 0.5
+        },
+        {
+          "timestamp": "2025-01-01T00:05:00Z",
+          "value": 250
+        },
+        {
+          "timestamp": "2025-01-01T00:10:00Z",
+          "value": 0.5
+        }
+      ]
+    },
+    "mhl_qc_short_series": {
+      "_function": "applyRainfallQc",
+      "output": [
+        {
+          "timestamp": "2025-01-01T00:00:00Z",
+          "value": 1
+        }
+      ]
+    },
+    "bom_qc_normal_series": {
+      "_function": "applyBomQc",
+      "output": {
+        "cleanedReadings": [
+          {
+            "timestamp": "2025-01-01T00:00:00Z",
+            "value": 0.5
+          },
+          {
+            "timestamp": "2025-01-01T00:05:00Z",
+            "value": 1.2
+          },
+          {
+            "timestamp": "2025-01-01T00:10:00Z",
+            "value": 0.8
+          }
+        ],
+        "rejectedReadings": [],
+        "rejectionReasons": []
+      }
+    },
+    "bom_qc_invalid_values": {
+      "_function": "applyBomQc",
+      "output": {
+        "cleanedReadings": [
+          {
+            "timestamp": "2025-01-01T00:00:00Z",
+            "value": 0.5
+          },
+          {
+            "timestamp": "2025-01-01T00:10:00Z",
+            "value": 1
+          }
+        ],
+        "rejectedReadings": [
+          {
+            "timestamp": "2025-01-01T00:05:00Z",
+            "value": -3
+          }
+        ],
+        "rejectionReasons": [
+          "invalid value"
+        ]
+      }
+    },
+    "bom_qc_isolated_spike": {
+      "_function": "applyBomQc",
+      "output": {
+        "cleanedReadings": [
+          {
+            "timestamp": "2025-01-01T00:00:00Z",
+            "value": 0.5
+          },
+          {
+            "timestamp": "2025-01-01T00:05:00Z",
+            "value": 0.5
+          },
+          {
+            "timestamp": "2025-01-01T00:15:00Z",
+            "value": 0.5
+          },
+          {
+            "timestamp": "2025-01-01T00:20:00Z",
+            "value": 0.5
+          }
+        ],
+        "rejectedReadings": [
+          {
+            "timestamp": "2025-01-01T00:10:00Z",
+            "value": 250
+          }
+        ],
+        "rejectionReasons": [
+          "isolated spike: 250mm vs neighbor max 0.5mm"
+        ]
+      }
+    },
+    "bom_qc_empty": {
+      "_function": "applyBomQc",
+      "output": {
+        "cleanedReadings": [],
+        "rejectedReadings": [],
+        "rejectionReasons": []
+      }
+    },
+    "is_cumulative_strictly_increasing": {
+      "_function": "_isBomCumulative",
+      "output": true
+    },
+    "is_cumulative_interval_pattern": {
+      "_function": "_isBomCumulative",
+      "output": false
+    },
+    "cumulative_to_increments_basic": {
+      "_function": "_bomCumulativeToIncrements",
+      "output": [
+        {
+          "timestamp": "2025-01-01T00:05:00Z",
+          "value": 0.5
+        },
+        {
+          "timestamp": "2025-01-01T00:10:00Z",
+          "value": 0.7
+        },
+        {
+          "timestamp": "2025-01-01T00:20:00Z",
+          "value": 1.2
+        }
+      ]
+    }
+  }
+}
