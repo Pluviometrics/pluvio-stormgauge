@@ -1576,6 +1576,7 @@ let atmosRadarLayer = null;
 let atmosRadarPaneName = null;
 let mapSetupPromise = null;
 let lgaBoundaryLoadPromise = null;
+const ATMOS_RADAR_OVERLAY_ENABLED = false;
 const mapReadyPromise = {
   then: (onFulfilled, onRejected) => ensureAtmosMapSetup().then(onFulfilled, onRejected),
   catch: onRejected => ensureAtmosMapSetup().catch(onRejected),
@@ -1604,8 +1605,12 @@ function initAtmosMap() {
   if (map) return map;
   map = window.mapInit.createAtmosMap({ L });
   atmosBaseLayer = window.mapLayers.addAtmosBaseLayer(map, { L });
-  atmosRadarPaneName = window.mapLayers.ensureAtmosRadarPane(map);
-  queueAtmosRadarLayer(map);
+  if (ATMOS_RADAR_OVERLAY_ENABLED) {
+    atmosRadarPaneName = window.mapLayers.ensureAtmosRadarPane(map);
+    queueAtmosRadarLayer(map);
+  } else {
+    console.info('[Atmos radar] overlay disabled');
+  }
   return map;
 }
 
