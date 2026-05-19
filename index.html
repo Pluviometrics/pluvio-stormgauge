@@ -331,6 +331,7 @@ html[data-theme="dark"] ::-webkit-scrollbar-thumb:hover { background: #2A4060; }
 </div>
 
 <!-- AEP Tool (display:flex so Leaflet map inits with correct dimensions) -->
+<div id="mobile-backdrop" class="mobile-backdrop" onclick="closeMobileSidebar()"></div>
 <div id="page-aep" style="flex-direction:column;flex:1;min-height:0;overflow:hidden;display:none">
 <div class="tab-bar">
   <div class="tab active" onclick="switchTab('map')">Map View</div>
@@ -339,7 +340,7 @@ html[data-theme="dark"] ::-webkit-scrollbar-thumb:hover { background: #2A4060; }
   <div class="tab" onclick="switchTab('top-dur')">All Durations</div>
   <div class="tab" onclick="switchTab('daily')">Daily Totals</div>
   <div class="tab" onclick="switchTab('monitors')">Other Monitors</div>
-  <div style="margin-left:auto;display:flex;align-items:center;gap:6px;padding:0 12px">
+  <div class="tab-exports-cluster" style="margin-left:auto;display:flex;align-items:center;gap:6px;padding:0 12px">
     <select id="previousAnalysisDropdown" style="display:none;font-size:11px;padding:3px 6px;max-width:220px" onchange="loadPreviousAnalysis(this.value)">
       <option value="">Previous Analyses...</option>
     </select>
@@ -476,6 +477,8 @@ html[data-theme="dark"] ::-webkit-scrollbar-thumb:hover { background: #2A4060; }
 
   <!-- Main -->
   <div class="main">
+    <button type="button" class="mobile-sidebar-toggle mobile-only" id="mobile-sidebar-toggle"
+            aria-label="Open stations and filters" onclick="openMobileSidebar()">&#9776; Stations</button>
     <div id="map"></div>
     <div id="tab-rainfall"><div style="display:flex;gap:6px;align-self:flex-end;margin:4px 0 6px"><button id="rainfall-reset-zoom-btn" class="btn-secondary" style="font-size:12px" onclick="if(rainfallTotalsChart){rainfallTotalsChart.options.scales.y.max=undefined;rainfallTotalsChart.resetZoom();}">Reset Zoom</button></div><div id="tab-rainfall-inner"><canvas id="rainfall-totals-canvas"></canvas></div></div>
 
@@ -2406,6 +2409,7 @@ if (aepStr.startsWith('>')) return 'Very frequent - less than 2-year ARI';
 async function runAnalysis() {
   const ctx = getCurrentAnalysisContext();
   if (!ctx || !selected) return;
+  closeMobileSidebar();
   const { dur, fromDt, toDt, baseKey, summaryKey } = ctx;
   lastAnalysisContext = { ...ctx };
 
@@ -5310,6 +5314,23 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
 // init() is called lazily by switchPage('aep') on first visit
+
+// Mobile sidebar drawer
+function openMobileSidebar() {
+  document.querySelector('#page-aep .sidebar')?.classList.add('open');
+  document.getElementById('mobile-backdrop')?.classList.add('show');
+  document.body.classList.add('mobile-sidebar-open');
+}
+function closeMobileSidebar() {
+  document.querySelector('#page-aep .sidebar')?.classList.remove('open');
+  document.getElementById('mobile-backdrop')?.classList.remove('show');
+  document.body.classList.remove('mobile-sidebar-open');
+}
+window.openMobileSidebar = openMobileSidebar;
+window.closeMobileSidebar = closeMobileSidebar;
+window.addEventListener('resize', () => {
+  if (!window.matchMedia('(max-width: 768px)').matches) closeMobileSidebar();
+});
 </script>
 </body>
 </html>

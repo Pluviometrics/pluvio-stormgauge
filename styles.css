@@ -450,3 +450,85 @@ html[data-theme="dark"] .hc-badge.live{background:rgba(0,196,190,.12);color:#00D
   #cctvPackagesMap{min-height:320px}
   #reliningPackagesMap{min-height:320px}
 }
+
+/* ─────────────────────────────────────────────────────────────────────
+   MOBILE: ≤768px — Rainfall Calculator stripped to essentials.
+   Sidebar becomes a left-slide drawer; tab bar scrolls horizontally;
+   non-calculator pages hidden defensively.
+   ───────────────────────────────────────────────────────────────────── */
+.mobile-only{display:none}
+.mobile-backdrop{display:none;position:fixed;inset:0;background:rgba(7,16,26,.45);z-index:99}
+.mobile-sidebar-toggle{
+  align-items:center;gap:6px;position:absolute;top:10px;left:10px;z-index:60;
+  background:white;border:1px solid var(--border);border-radius:var(--r);
+  padding:8px 12px;font-size:12px;font-weight:700;color:var(--text);
+  cursor:pointer;box-shadow:var(--sh)
+}
+html[data-theme="dark"] .mobile-sidebar-toggle{background:#0D1826;border-color:#1C2E40;color:#DCE8F2}
+
+@media (max-width: 768px) {
+  .mobile-only{display:inline-flex}
+
+  /* Header */
+  header{height:48px;padding:0 12px}
+  .logo{width:28px;height:28px}
+  .h-title{font-size:13px;letter-spacing:.12em}
+  .h-sub{display:none}
+  .h-status #status-txt{display:none}
+  #theme-toggle{padding:4px 8px;font-size:11px;margin-left:6px}
+
+  /* Page nav */
+  #page-nav{padding:0 6px}
+  .pnav-btn{padding:8px 12px;font-size:11px}
+  .pnav-home{display:none}
+  .rainfall-day-toggle{margin-left:auto;padding:5px 4px;gap:4px}
+  .rainfall-day-toggle__btn{font-size:10px;padding:4px 8px}
+
+  /* Tab bar: horizontal scroll */
+  .tab-bar{overflow-x:auto;overflow-y:hidden;flex-wrap:nowrap;-webkit-overflow-scrolling:touch}
+  .tab{padding:9px 12px;font-size:11px;flex-shrink:0}
+  .tab-exports-cluster{margin-left:6px!important;padding:0 4px!important;gap:4px!important;flex-shrink:0}
+  #previousAnalysisDropdown,#deleteCacheEntryBtn,.tab-exports-sep,.tab-exports-lbl{display:none!important}
+
+  /* Body: sidebar becomes off-canvas drawer */
+  .body{position:relative}
+  .sidebar{
+    position:absolute;top:0;left:0;height:100%;width:min(88vw,320px);
+    z-index:100;transform:translateX(-100%);transition:transform .25s ease;
+    box-shadow:4px 0 24px rgba(0,0,0,.18)
+  }
+  .sidebar.open{transform:translateX(0)}
+  .main{width:100%}
+
+  /* Map / chart */
+  #tab-rainfall{padding:10px 12px}
+
+  /* Results panel */
+  .results{max-height:80vh}
+  .res-hdr{padding:10px 12px;flex-wrap:wrap;gap:8px}
+  .res-title{font-size:13px}
+  .res-sub{font-size:10px}
+  .rtabs{padding:0 8px;overflow-x:auto;flex-wrap:nowrap;-webkit-overflow-scrolling:touch}
+  .rtab{padding:8px 10px;font-size:11px;flex-shrink:0}
+  .rpanel{padding:12px}
+  .results-table.compact th,.results-table.compact td{padding:5px 8px;font-size:11px}
+
+  /* Summary cards / AEP hero stack */
+  .cards{grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-bottom:12px}
+  .card{padding:10px}
+  .card-val{font-size:20px}
+  .aep-hero{flex-direction:column;align-items:flex-start;padding:16px;gap:10px}
+  .aep-hero-val{font-size:36px}
+
+  /* Hide non-rainfall tools on mobile */
+  #page-costing,#page-prioritisation,#page-relining,#page-cctvpackaging{display:none!important}
+
+  /* Dark-mode parity for mobile sizing (theme rules have higher specificity) */
+  html[data-theme="dark"] header{height:48px;padding:0 12px}
+  html[data-theme="dark"] .tab{padding:9px 12px}
+  html[data-theme="dark"] .sb-section{padding:10px 12px}
+  html[data-theme="dark"] .res-hdr{padding:10px 12px}
+  html[data-theme="dark"] .rtabs{padding:0 8px}
+  html[data-theme="dark"] .rtab{padding:8px 10px}
+  html[data-theme="dark"] .rpanel{padding:12px}
+}
