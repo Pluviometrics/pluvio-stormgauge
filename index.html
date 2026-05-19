@@ -19,7 +19,7 @@
 <script src="./nsw_lga_boundaries.js"></script>
 <script src="./bom_northern_beaches_all_gauges.js"></script>
 <script src="./bom_ifd_cache.js"></script>
-<link rel="stylesheet" href="./styles.css?v=mobile2"/>
+<link rel="stylesheet" href="./styles.css?v=mobile3"/>
 
 <!-- ═══════════════════════════════════════════════════════════════════════════
      STORMGAUGE THEME SYSTEM — light/dark via html[data-theme]
@@ -356,6 +356,9 @@ html[data-theme="dark"] ::-webkit-scrollbar-thumb:hover { background: #2A4060; }
 <div class="body">
   <!-- Sidebar -->
   <div class="sidebar">
+    <div class="sb-mobile-header mobile-only">
+      <button type="button" class="sidebar-close" aria-label="Close filters and stations" onclick="closeMobileSidebar()">&times;</button>
+    </div>
 
     <!-- LGA / Area filter -->
     <div class="sb-section">
