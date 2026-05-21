@@ -2595,6 +2595,19 @@ function onGaugeSetSubChange() {
 // â"€â"€ MHL data fetch (browser â†’ MHL directly, no backend) â"€â"€â"€â"€
 const MHL_BASE = 'https://wiski.mhl.nsw.gov.au/KiWIS/KiWIS';
 
+async function fetchWithTimeout(url, options = {}, timeoutMs = 30000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (e) {
+    if (e?.name === 'AbortError') throw new Error(`Request timed out after ${Math.round(timeoutMs / 1000)}s`);
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function fetchMhlData(tsId, fromDt, toDt, debug) {
   const fmt = d => {
     const p = n => String(n).padStart(2,'0');
@@ -2613,7 +2626,7 @@ async function fetchMhlData(tsId, fromDt, toDt, debug) {
   const url = `${MHL_BASE}?${params}`;
   if (debug) console.log('[DEBUG Oliver St] MHL endpoint:', url);
 
-  const resp = await fetch(url);
+  const resp = await fetchWithTimeout(url);
   if (!resp.ok) throw new Error(`MHL API ${resp.status}`);
   const data = await resp.json();
 
@@ -4442,7 +4455,7 @@ async function exportAllXlsx() {
 
 // â"€â"€ Helpers â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 async function api(path) {
-  const r = await fetch(API + path);
+  const r = await fetchWithTimeout(API + path);
   if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
   return r.json();
 }
