@@ -459,7 +459,7 @@ html[data-theme="dark"] .hc-badge.live{background:rgba(0,196,190,.12);color:#00D
 .mobile-only{display:none}
 .mobile-backdrop{display:none;position:fixed;inset:0;background:rgba(7,16,26,.45);z-index:1099}
 .mobile-sidebar-toggle{
-  align-items:center;gap:6px;position:absolute;top:10px;left:10px;z-index:60;
+  align-items:center;gap:6px;position:absolute;top:10px;left:10px;z-index:1001;
   background:white;border:1px solid var(--border);border-radius:var(--r);
   padding:8px 12px;font-size:12px;font-weight:700;color:var(--text);
   cursor:pointer;box-shadow:var(--sh)
@@ -526,6 +526,8 @@ html[data-theme="dark"] .sidebar-close{color:#8AAFC8}
 
   /* Map / chart */
   #tab-rainfall{padding:10px 12px}
+  /* Push Leaflet's top-left zoom control below the floating Stations button */
+  .leaflet-top.leaflet-left{margin-top:46px}
 
   /* Results panel */
   .results{max-height:80vh}
