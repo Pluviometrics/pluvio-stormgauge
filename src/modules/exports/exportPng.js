@@ -1,8 +1,8 @@
 import { csvSlug } from './exportHelpers.js';
 
 export async function exportPNG() {
-  const el = document.getElementById('results');
-  if (!el || !el.classList.contains('show')) {
+  const resultsEl = document.getElementById('results');
+  if (!resultsEl || !resultsEl.classList.contains('show')) {
     alert('No results to export. Run an analysis first.');
     return;
   }
@@ -11,37 +11,60 @@ export async function exportPNG() {
     return;
   }
 
+  // Capture priority — narrowest first. We want the PNG to stop exactly at
+  // the edge of the table the user is looking at, with no panel-width
+  // whitespace and no button cluster on the right.
+  const activePanel = resultsEl.querySelector('.rpanel.active');
+  const target =
+       activePanel?.querySelector('table.results-table')
+    || activePanel?.querySelector('.results-table-wrap')
+    || activePanel
+    || resultsEl;
+
   const now    = new Date();
   const pad    = n => String(n).padStart(2, '0');
   const tsFile = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}`;
   const slug   = csvSlug(selected?.name ?? '');
   const filename = `stormgauge_report${slug ? '_' + slug : ''}_${tsFile}.png`;
 
-  // Temporarily remove overflow/max-height so html2canvas captures full content,
-  // not just the clipped scrollable viewport.
-  const prev = { maxHeight: el.style.maxHeight, overflow: el.style.overflow };
-  el.style.maxHeight = 'none';
-  el.style.overflow  = 'visible';
+  // Lift overflow/max-height on the results container and any intermediate
+  // scroll wrapper so the target renders at full size for capture.
+  const prevResults = { maxHeight: resultsEl.style.maxHeight, overflow: resultsEl.style.overflow };
+  resultsEl.style.maxHeight = 'none';
+  resultsEl.style.overflow  = 'visible';
 
-  // res-hdr is position:sticky — set to relative so it doesn't duplicate in capture.
-  const hdr    = el.querySelector('.res-hdr');
-  const prevPos = hdr ? getComputedStyle(hdr).position : null;
-  if (hdr) hdr.style.position = 'relative';
+  const wrapEl = target.closest?.('.results-table-wrap');
+  const prevWrap = wrapEl ? { overflow: wrapEl.style.overflow, maxHeight: wrapEl.style.maxHeight } : null;
+  if (wrapEl) {
+    wrapEl.style.overflow = 'visible';
+    wrapEl.style.maxHeight = 'none';
+  }
 
-  // Hide the right-side action cluster (Recalc / Save Analysis / Close) from
-  // the capture — the PNG should only show the result content and its title.
-  // The cluster is the last child div of .res-hdr in index.html.
-  const hdrActions = hdr ? hdr.querySelector(':scope > div:last-child') : null;
-  const prevActionsDisplay = hdrActions ? hdrActions.style.display : null;
-  if (hdrActions) hdrActions.style.display = 'none';
+  // Snapshot the live theme so we can propagate it onto html2canvas's
+  // cloned <html> in onclone. Without this, dark-theme CSS overrides
+  // (e.g. `html[data-theme="dark"] td { color: #C8DCEA }`) don't apply
+  // in the capture and td text falls back to the default light-theme
+  // colour `#1A2B3C` — invisible against the dark canvas background.
+  const liveTheme = document.documentElement.dataset.theme || null;
 
   try {
-    const canvas = await html2canvas(el, {
+    // Constrain the output canvas to the target's bounding box.
+    // Do NOT override windowWidth/windowHeight — that forces html2canvas to
+    // re-render the page in a virtual viewport of that size, which breaks
+    // sticky-positioned children like the table <thead> (renders with the
+    // wrong background colour).
+    const rect = target.getBoundingClientRect();
+    const canvas = await html2canvas(target, {
       backgroundColor: '#0A1520',
       scale: 2,
       useCORS: true,
       allowTaint: false,
-      logging: false
+      logging: false,
+      width:  Math.ceil(rect.width),
+      height: Math.ceil(rect.height),
+      onclone: (clonedDoc) => {
+        if (liveTheme) clonedDoc.documentElement.dataset.theme = liveTheme;
+      }
     });
     canvas.toBlob(blob => {
       const a = document.createElement('a');
@@ -54,15 +77,11 @@ export async function exportPNG() {
     console.error('PNG export failed:', e);
     alert('PNG export failed: ' + e.message);
   } finally {
-    el.style.maxHeight = prev.maxHeight;
-    el.style.overflow  = prev.overflow;
-    if (hdr) {
-      if (prevPos && prevPos !== 'relative') hdr.style.position = prevPos;
-      else hdr.style.removeProperty('position');
-    }
-    if (hdrActions) {
-      if (prevActionsDisplay) hdrActions.style.display = prevActionsDisplay;
-      else hdrActions.style.removeProperty('display');
+    resultsEl.style.maxHeight = prevResults.maxHeight;
+    resultsEl.style.overflow  = prevResults.overflow;
+    if (wrapEl && prevWrap) {
+      wrapEl.style.overflow  = prevWrap.overflow;
+      wrapEl.style.maxHeight = prevWrap.maxHeight;
     }
   }
 }
