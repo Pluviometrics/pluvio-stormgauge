@@ -9,7 +9,7 @@ export function setMode(mode, ctx) {
 export function switchTab(tab, skipRun = false, ctx) {
   ctx.setCurrentTab(tab);
   ctx.document.querySelectorAll('.tab').forEach((el, index) => {
-    el.classList.toggle('active', ['map','rainfall-totals','top-site','top-dur','daily','monitors'][index] === tab);
+    el.classList.toggle('active', ['map','rainfall-totals','top-site','top-dur','daily','top10','monitors'][index] === tab);
   });
   const leafletMap = ctx.document.getElementById('map');
   const rainfallTab = ctx.document.getElementById('tab-rainfall');
@@ -27,6 +27,10 @@ export function switchTab(tab, skipRun = false, ctx) {
   ctx.updateRecalcButton();
   if (tab === 'monitors') {
     ctx.loadOtherMonitors();
+  } else if (tab === 'top10') {
+    // Top 10 does not depend on a selected station — render whatever is
+    // cached (or the Run CTA) regardless of selection state.
+    ctx.renderCachedCurrentTab();
   } else if (!skipRun && ctx.getSelected()) {
     ctx.renderCachedCurrentTab();
   }
