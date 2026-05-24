@@ -339,6 +339,7 @@ html[data-theme="dark"] ::-webkit-scrollbar-thumb:hover { background: #2A4060; }
   <div class="tab" onclick="switchTab('top-site')">Top Intensity Per Site</div>
   <div class="tab" onclick="switchTab('top-dur')">All Durations</div>
   <div class="tab" onclick="switchTab('daily')">Daily Totals</div>
+  <div class="tab" onclick="switchTab('top10')">Top 10</div>
   <div class="tab" onclick="switchTab('monitors')">Other Monitors</div>
   <div class="tab-exports-cluster" style="margin-left:auto;display:flex;align-items:center;gap:6px;padding:0 12px">
     <select id="previousAnalysisDropdown" style="display:none;font-size:11px;padding:3px 6px;max-width:220px" onchange="loadPreviousAnalysis(this.value)">
@@ -887,6 +888,8 @@ html[data-theme="dark"] ::-webkit-scrollbar-thumb:hover { background: #2A4060; }
   import * as uiTheme             from './src/modules/ui/theme.js';
   import * as uiControls          from './src/modules/ui/controls.js';
   import * as rainfallDay         from './src/modules/rainfall/dailyGrouping.js';
+  import * as top10Analysis       from './src/modules/top10/top10Analysis.js';
+  import * as top10Render         from './src/modules/top10/top10Render.js';
   window.buildExportModel    = buildExportModel;
   window.exportCSV           = exportCSV;
   window.exportXLSX          = exportXLSX;
@@ -901,10 +904,14 @@ html[data-theme="dark"] ::-webkit-scrollbar-thumb:hover { background: #2A4060; }
   window.uiTheme             = uiTheme;
   window.uiControls          = uiControls;
   window.rainfallDay         = rainfallDay;
+  window.top10Analysis       = top10Analysis;
+  window.top10Render         = top10Render;
   window.dispatchEvent(new Event('atmos-modules-ready'));
 
 // ═══ RELINING PACKAGING FUNCTIONS (restored from commit 14e7277) ═══
 
+// XSS: duplicate of the classic-script definition below (~line 1340) - keep in sync.
+// Module scope is not exposed to the classic <script>, so both copies are required.
 function escapeHtml(value) {
   return String(value ?? '')
     .replace(/&/g, '&amp;')
@@ -1343,6 +1350,8 @@ const DUR_LABELS = {
   8640:'144 hr',10080:'168 hr'
 };
 
+// XSS: duplicate of the module-scope definition above (~line 902) - keep in sync.
+// Module scope is not exposed to this classic <script>, so both copies are required.
 function escapeHtml(value) {
   return String(value ?? '')
     .replace(/&/g, '&amp;')
@@ -2288,6 +2297,13 @@ function getTopSiteAnalysisKey(fromDt, toDt) {
 }
 
 function renderCachedCurrentTab(context = null) {
+  // Top 10 does not depend on a selected station — render before the
+  // ctx/selected gate that the other tabs require.
+  if (currentTab === 'top10') {
+    renderTop10Panel();
+    return;
+  }
+
   const ctx = context || lastAnalysisContext || getCurrentAnalysisContext(true);
   if (!ctx || !selected) return;
 
@@ -2536,6 +2552,8 @@ async function runAnalysis() {
 
     setLoadTxt('Calculating top intensity per site...');
     await runTopPerSite(dur, fromDt, toDt, { render: false, manageLoader: false });
+    setLoadTxt('Calculating Top 10 for selected gauge...');
+    computeTop10FromLastResults();
     hideLoad();
     captureAnalysisToCache('map', ctx);
     renderCachedCurrentTab(ctx);
@@ -3229,6 +3247,137 @@ async function runTopPerSite(dur, fromDt, toDt, options = {}) {
   return allSiteResults;
 }
 
+// ── Top 10 (per selected gauge) ────────────────────────────────────────────
+// Two views in one tab: rarest gauge-days by AEP (top 10 days for the
+// selected gauge) and biggest gauge-days by total rainfall. Data is
+// computed from lastResults.readings (populated by runAnalysis), so this
+// tab updates whenever you click Analyse on a new gauge or new period.
+let lastTop10Data = null;
+let top10View = 'aep';
+
+function getTop10AnalysisKey() {
+  if (!selected || !lastAnalysisContext) return null;
+  const dayMode = window.RAINFALL_DAY_MODE || 'midnight';
+  return `${lastAnalysisContext.baseKey}|${dayMode}`;
+}
+
+function setTop10View(view) {
+  if (view !== 'rainfall' && view !== 'aep') return;
+  top10View = view;
+  if (currentTab === 'top10') renderTop10Panel();
+}
+
+function renderTop10Panel() {
+  setResultsTabMode('single-table');
+  document.getElementById('results').classList.add('show');
+
+  const target = document.getElementById('r-allsite');
+  if (!target) return;
+
+  if (!selected) {
+    document.getElementById('res-title').textContent = 'Top 10';
+    document.getElementById('res-sub').textContent = 'Select a gauge to see its top 10 rainfall and AEP days.';
+    target.innerHTML = `
+      <div style="padding:24px;color:var(--text-l);font-size:13px;text-align:center">
+        Pick a gauge from the sidebar, then click <strong>Analyse</strong>.
+      </div>`;
+    switchRTab('r-allsite');
+    return;
+  }
+
+  document.getElementById('res-title').textContent = `Top 10 - ${selected.name}`;
+
+  const cacheKey = getTop10AnalysisKey();
+  const dayMode = window.RAINFALL_DAY_MODE || 'midnight';
+  const periodLabel = window.rainfallDay?.RAINFALL_DAY_PERIOD_LABEL?.[dayMode]
+    || (dayMode === '9am' ? '9am rainfall day' : 'midnight rainfall day');
+
+  if (!lastTop10Data || !cacheKey || lastTop10Data.key !== cacheKey) {
+    document.getElementById('res-sub').textContent = `${periodLabel} — no analysis cached for the current settings`;
+    target.innerHTML = `
+      <div style="padding:24px;color:var(--text-l);font-size:13px;text-align:center">
+        Use the <strong>Analyse</strong> button to populate Top 10 for this gauge and period.
+      </div>`;
+    switchRTab('r-allsite');
+    return;
+  }
+
+  document.getElementById('res-sub').textContent =
+    `${fmtDt(lastTop10Data.fromIso)} -> ${fmtDt(lastTop10Data.toIso)} - ${periodLabel}`;
+
+  if (!window.top10Render?.renderTop10Panel) {
+    target.innerHTML = '<div style="padding:24px;color:var(--text-l);font-size:13px;text-align:center">Top 10 module did not load.</div>';
+    switchRTab('r-allsite');
+    return;
+  }
+  window.top10Render.renderTop10Panel({
+    targetEl: target,
+    view: top10View,
+    rainfallRows: lastTop10Data.rainfall || [],
+    aepRows:      lastTop10Data.aep      || [],
+    onSwitchView: setTop10View,
+    onClickRainfallDay: openTop10RainfallDay,
+    deps: {
+      escapeHtml,
+      aepToARI,
+      classifyAEP,
+      DUR_LABELS,
+      formatRainfallMm: window.rainfallDay?.formatRainfallMm
+        || ((v) => Number.isFinite(Number(v)) ? `${Number(v).toFixed(1)} mm` : '-'),
+    },
+  });
+  switchRTab('r-allsite');
+}
+
+// Jump from a Top 10 rainfall row to the Daily Totals tab's Hourly
+// Breakdown for that day. Relies on lastDailyData being populated (which
+// runAnalysis does alongside Top 10 — so the cache is always in sync).
+function openTop10RainfallDay(day) {
+  if (!day) return;
+  switchTab('daily');
+  if (typeof openHourlyBreakdown === 'function') {
+    // openHourlyBreakdown reads #hourlyDaySel and flips the subtab; the
+    // selector exists once renderDailyTotals has run (which switchTab →
+    // renderCachedCurrentTab → renderDailyTotals does synchronously).
+    openHourlyBreakdown(day);
+  }
+}
+
+// Compute Top 10 for the currently-selected gauge from already-fetched
+// readings. Called from runAnalysis after lastResults is populated, so no
+// extra fetch needed. Updates lastTop10Data; re-renders the panel if the
+// Top 10 tab is currently visible.
+function computeTop10FromLastResults() {
+  if (!selected || !lastResults || !Array.isArray(lastResults.readings)) {
+    lastTop10Data = null;
+    return;
+  }
+  const dayMode = window.RAINFALL_DAY_MODE || 'midnight';
+  const perGauge = [{
+    stationId:       selected.station_id,
+    stationName:     selected.name,
+    intervalMinutes: lastResults.intervalMinutes || 5,
+    readings:        lastResults.readings,
+  }];
+  try {
+    const rainfallRows = window.top10Analysis.computeTopRainfallDays(perGauge, dayMode, 10);
+    const aepRows = window.top10Analysis.computeTopAepDays(perGauge, calcAEP, dayMode, 10);
+    lastTop10Data = {
+      key:        getTop10AnalysisKey(),
+      stationId:  selected.station_id,
+      fromIso:    lastResults.from,
+      toIso:      lastResults.to,
+      rainfall:   rainfallRows,
+      aep:        aepRows,
+    };
+    console.log(`[Top10] ${selected.name}: rainfallRows=${rainfallRows.length} aepRows=${aepRows.length}`);
+  } catch (e) {
+    console.error('[Top10] compute failed:', e);
+    lastTop10Data = null;
+  }
+  if (currentTab === 'top10') renderTop10Panel();
+}
+
 // Convert AEP string like "~5%", ">63.2%", "~0.5%" to a probability number for comparison
 function aepStringToProb(aepStr) {
   if (!aepStr || aepStr.startsWith('>')) return 1;  // very frequent
@@ -3290,7 +3439,7 @@ function sortTopPerSiteBy(key) {
 function topSiteHeader(label, key, alignRight = false) {
   const classes = ['sortable-th'];
   if (topSiteSort.key === key) classes.push(topSiteSort.dir === 'asc' ? 'active-asc' : 'active-desc');
-  return `<th class="${classes.join(' ')}${alignRight ? ' r' : ''}" onclick="sortTopPerSiteBy('${key}')">${label}</th>`;
+  return `<th class="${classes.join(' ')}${alignRight ? ' r' : ''}" onclick="sortTopPerSiteBy(decodeURIComponent('${encodeInlineArg(key)}'))">${label}</th>`;
 }
 
 async function openTopSiteDailyTotals(stationId) {
@@ -3560,7 +3709,7 @@ function renderDailyTotals(data) {
 
   const dailyRows = days.map(d => `
     <tr id="daily-row-${d.day}" class="${d.day === highlightDay ? 'daily-highlight' : ''}">
-      <td><button class="day-link" onclick="openHourlyBreakdown('${d.day}')">${d.label}</button></td>
+      <td><button class="day-link" onclick="openHourlyBreakdown(decodeURIComponent('${encodeInlineArg(d.day)}'))">${d.label}</button></td>
       <td class="r"><strong>${d.total} mm</strong></td>
       <td style="width:40%">
         <div class="bar-wrap"><div class="bar" style="width:${d.total/maxT*100}%"></div></div>
@@ -4725,14 +4874,14 @@ async function loadOtherMonitors() {
       <div class="lbl">Monitor Type</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">
         ${MONITOR_PARAM_TYPES.map(t => `
-          <button onclick="filterMonitors('${t.key}')"
-            id="mtype-${t.key}"
+          <button onclick="filterMonitors(decodeURIComponent('${encodeInlineArg(t.key)}'))"
+            id="mtype-${escapeHtml(t.key)}"
             style="padding:6px 14px;border-radius:20px;border:1.5px solid var(--border);
                    background:white;font-size:12px;font-weight:600;cursor:pointer;
                    color:var(--text-l);transition:all .15s"
-            onmouseover="this.style.borderColor='${t.colour}'"
+            onmouseover="this.style.borderColor=${escapeHtml(JSON.stringify(t.colour))}"
             onmouseout="if(!this.classList.contains('active'))this.style.borderColor='var(--border)'">
-            ${t.label}
+            ${escapeHtml(t.label)}
           </button>
         `).join('')}
       </div>
@@ -5267,6 +5416,10 @@ function setRainfallDayMode(mode) {
   }
   if (typeof lastResults !== 'undefined' && lastResults) {
     try { renderResults(lastResults, lastResults.weather, lastResults.rainToday); } catch (e) { console.warn('[rainfall-day] re-render results failed', e); }
+  }
+  // Top 10 buckets readings by rainfall-day, so it needs a recompute too.
+  if (typeof computeTop10FromLastResults === 'function') {
+    try { computeTop10FromLastResults(); } catch (e) { console.warn('[rainfall-day] re-compute Top 10 failed', e); }
   }
   document.dispatchEvent(new CustomEvent('rainfall-day-mode-changed', { detail: { mode } }));
 }
