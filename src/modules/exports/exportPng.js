@@ -28,6 +28,13 @@ export async function exportPNG() {
   const prevPos = hdr ? getComputedStyle(hdr).position : null;
   if (hdr) hdr.style.position = 'relative';
 
+  // Hide the right-side action cluster (Recalc / Save Analysis / Close) from
+  // the capture — the PNG should only show the result content and its title.
+  // The cluster is the last child div of .res-hdr in index.html.
+  const hdrActions = hdr ? hdr.querySelector(':scope > div:last-child') : null;
+  const prevActionsDisplay = hdrActions ? hdrActions.style.display : null;
+  if (hdrActions) hdrActions.style.display = 'none';
+
   try {
     const canvas = await html2canvas(el, {
       backgroundColor: '#0A1520',
@@ -52,6 +59,10 @@ export async function exportPNG() {
     if (hdr) {
       if (prevPos && prevPos !== 'relative') hdr.style.position = prevPos;
       else hdr.style.removeProperty('position');
+    }
+    if (hdrActions) {
+      if (prevActionsDisplay) hdrActions.style.display = prevActionsDisplay;
+      else hdrActions.style.removeProperty('display');
     }
   }
 }
