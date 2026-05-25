@@ -11,8 +11,7 @@ export async function exportPNG() {
     return;
   }
 
-  // Capture the table-wrap when one exists — it has the right background
-  // colour for dark theme (#0A1520). We then force its display to
+  // Capture the table-wrap when one exists. We force its display to
   // inline-block + max-content during capture so the wrap collapses to
   // the table's natural width rather than spanning the full panel.
   // Falls back to the table, panel, then the whole results container.
@@ -23,9 +22,6 @@ export async function exportPNG() {
     || activePanel?.querySelector('table.results-table')
     || activePanel
     || resultsEl;
-  console.warn('[PNG] target=', target?.tagName, target?.id || '(no id)',
-               'class=' + (target?.className || ''),
-               'rect=', JSON.stringify(target?.getBoundingClientRect?.() || {}));
 
   const now    = new Date();
   const pad    = n => String(n).padStart(2, '0');
@@ -57,13 +53,16 @@ export async function exportPNG() {
     wrapEl.style.maxWidth  = 'none';
   }
 
-  // Snapshot the live theme so we can mirror it inside the capture clone.
+  // Use the live body's background as the canvas backdrop so transparent
+  // (odd-row) cells blend with the page instead of clashing against a
+  // hardcoded colour. Works for any theme — light or dark.
+  const captureBg = getComputedStyle(document.body).backgroundColor || '#F7F9FA';
   const liveTheme = document.documentElement.dataset.theme || null;
 
-  // BULLETPROOF FIX: copy the live computed colors onto each td/th as
-  // inline styles. html2canvas can ignore stylesheets in the clone, but it
-  // can't ignore inline styles. This is the only way to guarantee the
-  // capture matches what the user sees on screen.
+  // Copy live computed colours onto each cell as inline styles. html2canvas
+  // sometimes drops or misevaluates stylesheets in the clone; inline
+  // styles always survive. Header bg is overridden to transparent so the
+  // header doesn't render as a stripe in the cropped PNG.
   const allTds = target.querySelectorAll?.('td') || [];
   const allThs = target.querySelectorAll?.('th') || [];
   const prevInline = new Map();
@@ -76,35 +75,15 @@ export async function exportPNG() {
   allTds.forEach(freeze);
   allThs.forEach((th) => {
     freeze(th);
-    // Override th bg to match the table surround so the header doesn't
-    // render as a dark stripe in the cropped PNG.
     th.style.backgroundColor = 'transparent';
   });
 
-  // === ONE-SHOT DIAGNOSTIC === capture the live state of row 1 just
-  // before the html2canvas call so we can compare it to what the clone has.
-  try {
-    const liveRow1 = target.querySelector('tbody tr:first-child');
-    const liveRow1Td = liveRow1?.querySelector('td:nth-child(2)');
-    if (liveRow1Td) {
-      const cs = getComputedStyle(liveRow1Td);
-      console.warn('[PNG DIAG live] target=', target.tagName, target.className,
-        'liveTheme=' + liveTheme,
-        'row1.date computed color=' + cs.color,
-        'computed bg=' + cs.backgroundColor,
-        'inline color=' + (liveRow1Td.style.color || '(none)'),
-        'inline bg=' + (liveRow1Td.style.backgroundColor || '(none)'));
-    } else {
-      console.warn('[PNG DIAG live] could not find row 1 td:nth-child(2) inside target');
-    }
-  } catch (e) { console.warn('[PNG DIAG live] threw:', e.message); }
-
   try {
     // Re-measure after the wrap restyle so the canvas matches the
-    // shrink-wrapped width, not whatever it was before.
+    // shrink-wrapped width.
     const rect = target.getBoundingClientRect();
     const canvas = await html2canvas(target, {
-      backgroundColor: '#0A1520',
+      backgroundColor: captureBg,
       scale: 2,
       useCORS: true,
       allowTaint: false,
@@ -113,49 +92,6 @@ export async function exportPNG() {
       height: Math.ceil(rect.height),
       onclone: (clonedDoc) => {
         if (liveTheme) clonedDoc.documentElement.dataset.theme = liveTheme;
-        // Defensive: html2canvas sometimes doesn't re-evaluate attribute
-        // selectors after onclone modifies the cloned <html>, so the
-        // `html[data-theme="dark"] td { color }` rule from index.html may
-        // not actually apply. Inject an inline <style> with the dark-theme
-        // overrides so the capture always uses the right colours.
-        if (liveTheme === 'dark') {
-          const style = clonedDoc.createElement('style');
-          style.setAttribute('data-png-override', '1');
-          style.textContent = `
-            td { color: #C8DCEA !important; border-bottom: 1px solid #0F1E2C !important; }
-            tr:nth-child(even) td { background: #0C1A28 !important; }
-            th { background: transparent !important; color: #8AAFC8 !important; }
-            .results-table-wrap { background: #0A1520 !important; }
-          `;
-          clonedDoc.head.appendChild(style);
-        }
-
-        // DIAGNOSTIC inside the clone:
-        try {
-          console.warn('[PNG DIAG clone] html.dataset.theme=' + (clonedDoc.documentElement.dataset.theme || '(unset)'));
-          const overrideStyles = clonedDoc.head.querySelectorAll('style[data-png-override]');
-          console.warn('[PNG DIAG clone] injected <style> count=' + overrideStyles.length,
-            overrideStyles.length ? 'first 80 chars=' + overrideStyles[0].textContent.replace(/\s+/g, ' ').slice(0, 80) : '');
-          // Find the cloned version of our row 1 td. The clone of `target`
-          // is the html element corresponding to our live `target`.
-          const clonedTarget = wrapEl
-            ? clonedDoc.querySelector('.rpanel.active .results-table-wrap')
-            : clonedDoc.querySelector('.rpanel.active table.results-table');
-          const clonedRow1Td = clonedTarget?.querySelector('tbody tr:first-child td:nth-child(2)');
-          const clonedRow2Td = clonedTarget?.querySelector('tbody tr:nth-child(2) td:nth-child(2)');
-          if (clonedRow1Td) {
-            const cs = clonedDoc.defaultView.getComputedStyle(clonedRow1Td);
-            console.warn('[PNG DIAG clone] row 1 td (date): computed color=' + cs.color, 'bg=' + cs.backgroundColor,
-              'inline color=' + (clonedRow1Td.style.color || '(none)'),
-              'inline bg=' + (clonedRow1Td.style.backgroundColor || '(none)'));
-          } else {
-            console.warn('[PNG DIAG clone] could not find clonedRow1Td');
-          }
-          if (clonedRow2Td) {
-            const cs = clonedDoc.defaultView.getComputedStyle(clonedRow2Td);
-            console.warn('[PNG DIAG clone] row 2 td (date): computed color=' + cs.color, 'bg=' + cs.backgroundColor);
-          }
-        } catch (e) { console.warn('[PNG DIAG clone] threw:', e.message); }
       }
     });
     canvas.toBlob(blob => {
