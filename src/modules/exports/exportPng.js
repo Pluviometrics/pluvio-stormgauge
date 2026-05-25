@@ -81,6 +81,24 @@ export async function exportPNG() {
     th.style.backgroundColor = 'transparent';
   });
 
+  // === ONE-SHOT DIAGNOSTIC === capture the live state of row 1 just
+  // before the html2canvas call so we can compare it to what the clone has.
+  try {
+    const liveRow1 = target.querySelector('tbody tr:first-child');
+    const liveRow1Td = liveRow1?.querySelector('td:nth-child(2)');
+    if (liveRow1Td) {
+      const cs = getComputedStyle(liveRow1Td);
+      console.warn('[PNG DIAG live] target=', target.tagName, target.className,
+        'liveTheme=' + liveTheme,
+        'row1.date computed color=' + cs.color,
+        'computed bg=' + cs.backgroundColor,
+        'inline color=' + (liveRow1Td.style.color || '(none)'),
+        'inline bg=' + (liveRow1Td.style.backgroundColor || '(none)'));
+    } else {
+      console.warn('[PNG DIAG live] could not find row 1 td:nth-child(2) inside target');
+    }
+  } catch (e) { console.warn('[PNG DIAG live] threw:', e.message); }
+
   try {
     // Re-measure after the wrap restyle so the canvas matches the
     // shrink-wrapped width, not whatever it was before.
@@ -102,6 +120,7 @@ export async function exportPNG() {
         // overrides so the capture always uses the right colours.
         if (liveTheme === 'dark') {
           const style = clonedDoc.createElement('style');
+          style.setAttribute('data-png-override', '1');
           style.textContent = `
             td { color: #C8DCEA !important; border-bottom: 1px solid #0F1E2C !important; }
             tr:nth-child(even) td { background: #0C1A28 !important; }
@@ -110,6 +129,33 @@ export async function exportPNG() {
           `;
           clonedDoc.head.appendChild(style);
         }
+
+        // DIAGNOSTIC inside the clone:
+        try {
+          console.warn('[PNG DIAG clone] html.dataset.theme=' + (clonedDoc.documentElement.dataset.theme || '(unset)'));
+          const overrideStyles = clonedDoc.head.querySelectorAll('style[data-png-override]');
+          console.warn('[PNG DIAG clone] injected <style> count=' + overrideStyles.length,
+            overrideStyles.length ? 'first 80 chars=' + overrideStyles[0].textContent.replace(/\s+/g, ' ').slice(0, 80) : '');
+          // Find the cloned version of our row 1 td. The clone of `target`
+          // is the html element corresponding to our live `target`.
+          const clonedTarget = wrapEl
+            ? clonedDoc.querySelector('.rpanel.active .results-table-wrap')
+            : clonedDoc.querySelector('.rpanel.active table.results-table');
+          const clonedRow1Td = clonedTarget?.querySelector('tbody tr:first-child td:nth-child(2)');
+          const clonedRow2Td = clonedTarget?.querySelector('tbody tr:nth-child(2) td:nth-child(2)');
+          if (clonedRow1Td) {
+            const cs = clonedDoc.defaultView.getComputedStyle(clonedRow1Td);
+            console.warn('[PNG DIAG clone] row 1 td (date): computed color=' + cs.color, 'bg=' + cs.backgroundColor,
+              'inline color=' + (clonedRow1Td.style.color || '(none)'),
+              'inline bg=' + (clonedRow1Td.style.backgroundColor || '(none)'));
+          } else {
+            console.warn('[PNG DIAG clone] could not find clonedRow1Td');
+          }
+          if (clonedRow2Td) {
+            const cs = clonedDoc.defaultView.getComputedStyle(clonedRow2Td);
+            console.warn('[PNG DIAG clone] row 2 td (date): computed color=' + cs.color, 'bg=' + cs.backgroundColor);
+          }
+        } catch (e) { console.warn('[PNG DIAG clone] threw:', e.message); }
       }
     });
     canvas.toBlob(blob => {
