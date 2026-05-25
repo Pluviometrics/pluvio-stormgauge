@@ -61,21 +61,15 @@ export async function exportPNG() {
 
   // Copy live computed colours onto each cell as inline styles. html2canvas
   // sometimes drops or misevaluates stylesheets in the clone; inline
-  // styles always survive. Header bg is overridden to transparent so the
-  // header doesn't render as a stripe in the cropped PNG.
-  const allTds = target.querySelectorAll?.('td') || [];
-  const allThs = target.querySelectorAll?.('th') || [];
+  // styles always survive. Header keeps its natural --navy background +
+  // white text from the live CSS — needed so it stays readable.
+  const allCells = target.querySelectorAll?.('td, th') || [];
   const prevInline = new Map();
-  function freeze(el) {
+  allCells.forEach((el) => {
     prevInline.set(el, el.getAttribute('style') || '');
     const cs = getComputedStyle(el);
     el.style.color           = cs.color;
     el.style.backgroundColor = cs.backgroundColor;
-  }
-  allTds.forEach(freeze);
-  allThs.forEach((th) => {
-    freeze(th);
-    th.style.backgroundColor = 'transparent';
   });
 
   try {
