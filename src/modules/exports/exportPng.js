@@ -64,6 +64,16 @@ export async function exportPNG() {
   // colour `#1A2B3C` — invisible against the dark canvas background.
   const liveTheme = document.documentElement.dataset.theme || null;
 
+  // The dark-theme `th { background: #0B1824 }` rule renders as a dark
+  // stripe at the top of the cropped PNG. Strip it during capture so the
+  // header row blends with the rest of the table. Text colour is untouched.
+  const ths = target.querySelectorAll?.('th') || [];
+  const prevThBg = [];
+  ths.forEach((th, i) => {
+    prevThBg[i] = th.style.background;
+    th.style.background = 'transparent';
+  });
+
   try {
     // Re-measure after the wrap restyle so the canvas matches the
     // shrink-wrapped width, not whatever it was before.
@@ -100,5 +110,9 @@ export async function exportPNG() {
       if (prevWrap.width)     wrapEl.style.width    = prevWrap.width;    else wrapEl.style.removeProperty('width');
       if (prevWrap.maxWidth)  wrapEl.style.maxWidth = prevWrap.maxWidth; else wrapEl.style.removeProperty('max-width');
     }
+    ths.forEach((th, i) => {
+      if (prevThBg[i]) th.style.background = prevThBg[i];
+      else th.style.removeProperty('background');
+    });
   }
 }
