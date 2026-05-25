@@ -57,22 +57,8 @@ export async function exportPNG() {
     wrapEl.style.maxWidth  = 'none';
   }
 
-  // Snapshot the live theme so we can propagate it onto html2canvas's
-  // cloned <html> in onclone. Without this, dark-theme CSS overrides
-  // (e.g. `html[data-theme="dark"] td { color: #C8DCEA }`) don't apply
-  // in the capture and td text falls back to the default light-theme
-  // colour `#1A2B3C` — invisible against the dark canvas background.
+  // Snapshot the live theme so we can mirror it inside the capture clone.
   const liveTheme = document.documentElement.dataset.theme || null;
-
-  // The dark-theme `th { background: #0B1824 }` rule renders as a dark
-  // stripe at the top of the cropped PNG. Strip it during capture so the
-  // header row blends with the rest of the table. Text colour is untouched.
-  const ths = target.querySelectorAll?.('th') || [];
-  const prevThBg = [];
-  ths.forEach((th, i) => {
-    prevThBg[i] = th.style.background;
-    th.style.background = 'transparent';
-  });
 
   try {
     // Re-measure after the wrap restyle so the canvas matches the
@@ -88,6 +74,21 @@ export async function exportPNG() {
       height: Math.ceil(rect.height),
       onclone: (clonedDoc) => {
         if (liveTheme) clonedDoc.documentElement.dataset.theme = liveTheme;
+        // Defensive: html2canvas sometimes doesn't re-evaluate attribute
+        // selectors after onclone modifies the cloned <html>, so the
+        // `html[data-theme="dark"] td { color }` rule from index.html may
+        // not actually apply. Inject an inline <style> with the dark-theme
+        // overrides so the capture always uses the right colours.
+        if (liveTheme === 'dark') {
+          const style = clonedDoc.createElement('style');
+          style.textContent = `
+            td { color: #C8DCEA !important; border-bottom: 1px solid #0F1E2C !important; }
+            tr:nth-child(even) td { background: #0C1A28 !important; }
+            th { background: transparent !important; color: #8AAFC8 !important; }
+            .results-table-wrap { background: #0A1520 !important; }
+          `;
+          clonedDoc.head.appendChild(style);
+        }
       }
     });
     canvas.toBlob(blob => {
@@ -110,9 +111,5 @@ export async function exportPNG() {
       if (prevWrap.width)     wrapEl.style.width    = prevWrap.width;    else wrapEl.style.removeProperty('width');
       if (prevWrap.maxWidth)  wrapEl.style.maxWidth = prevWrap.maxWidth; else wrapEl.style.removeProperty('max-width');
     }
-    ths.forEach((th, i) => {
-      if (prevThBg[i]) th.style.background = prevThBg[i];
-      else th.style.removeProperty('background');
-    });
   }
 }
