@@ -60,6 +60,27 @@ export async function exportPNG() {
   // Snapshot the live theme so we can mirror it inside the capture clone.
   const liveTheme = document.documentElement.dataset.theme || null;
 
+  // BULLETPROOF FIX: copy the live computed colors onto each td/th as
+  // inline styles. html2canvas can ignore stylesheets in the clone, but it
+  // can't ignore inline styles. This is the only way to guarantee the
+  // capture matches what the user sees on screen.
+  const allTds = target.querySelectorAll?.('td') || [];
+  const allThs = target.querySelectorAll?.('th') || [];
+  const prevInline = new Map();
+  function freeze(el) {
+    prevInline.set(el, el.getAttribute('style') || '');
+    const cs = getComputedStyle(el);
+    el.style.color           = cs.color;
+    el.style.backgroundColor = cs.backgroundColor;
+  }
+  allTds.forEach(freeze);
+  allThs.forEach((th) => {
+    freeze(th);
+    // Override th bg to match the table surround so the header doesn't
+    // render as a dark stripe in the cropped PNG.
+    th.style.backgroundColor = 'transparent';
+  });
+
   try {
     // Re-measure after the wrap restyle so the canvas matches the
     // shrink-wrapped width, not whatever it was before.
@@ -111,5 +132,9 @@ export async function exportPNG() {
       if (prevWrap.width)     wrapEl.style.width    = prevWrap.width;    else wrapEl.style.removeProperty('width');
       if (prevWrap.maxWidth)  wrapEl.style.maxWidth = prevWrap.maxWidth; else wrapEl.style.removeProperty('max-width');
     }
+    prevInline.forEach((prev, el) => {
+      if (prev) el.setAttribute('style', prev);
+      else el.removeAttribute('style');
+    });
   }
 }
