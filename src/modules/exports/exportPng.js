@@ -11,15 +11,21 @@ export async function exportPNG() {
     return;
   }
 
-  // Capture priority — narrowest first. We want the PNG to stop exactly at
-  // the edge of the table the user is looking at, with no panel-width
-  // whitespace and no button cluster on the right.
+  // Capture the table-wrap when one exists — it has the right background
+  // colour for dark theme (#0A1520). We then force its display to
+  // inline-block + max-content during capture so the wrap collapses to
+  // the table's natural width rather than spanning the full panel.
+  // Falls back to the table, panel, then the whole results container.
   const activePanel = resultsEl.querySelector('.rpanel.active');
+  const wrapEl = activePanel?.querySelector('.results-table-wrap') || null;
   const target =
-       activePanel?.querySelector('table.results-table')
-    || activePanel?.querySelector('.results-table-wrap')
+       wrapEl
+    || activePanel?.querySelector('table.results-table')
     || activePanel
     || resultsEl;
+  console.warn('[PNG] target=', target?.tagName, target?.id || '(no id)',
+               'class=' + (target?.className || ''),
+               'rect=', JSON.stringify(target?.getBoundingClientRect?.() || {}));
 
   const now    = new Date();
   const pad    = n => String(n).padStart(2, '0');
@@ -27,17 +33,28 @@ export async function exportPNG() {
   const slug   = csvSlug(selected?.name ?? '');
   const filename = `stormgauge_report${slug ? '_' + slug : ''}_${tsFile}.png`;
 
-  // Lift overflow/max-height on the results container and any intermediate
-  // scroll wrapper so the target renders at full size for capture.
+  // Lift overflow/max-height on the results container so descendants
+  // render at full size for capture.
   const prevResults = { maxHeight: resultsEl.style.maxHeight, overflow: resultsEl.style.overflow };
   resultsEl.style.maxHeight = 'none';
   resultsEl.style.overflow  = 'visible';
 
-  const wrapEl = target.closest?.('.results-table-wrap');
-  const prevWrap = wrapEl ? { overflow: wrapEl.style.overflow, maxHeight: wrapEl.style.maxHeight } : null;
+  // Force the wrap to shrink-wrap the table. inline-block + max-content
+  // collapses the wrap to its content's intrinsic width; otherwise the
+  // wrap stretches to the panel width and html2canvas captures that.
+  const prevWrap = wrapEl ? {
+    overflow:  wrapEl.style.overflow,
+    maxHeight: wrapEl.style.maxHeight,
+    display:   wrapEl.style.display,
+    width:     wrapEl.style.width,
+    maxWidth:  wrapEl.style.maxWidth,
+  } : null;
   if (wrapEl) {
-    wrapEl.style.overflow = 'visible';
+    wrapEl.style.overflow  = 'visible';
     wrapEl.style.maxHeight = 'none';
+    wrapEl.style.display   = 'inline-block';
+    wrapEl.style.width     = 'max-content';
+    wrapEl.style.maxWidth  = 'none';
   }
 
   // Snapshot the live theme so we can propagate it onto html2canvas's
@@ -48,11 +65,8 @@ export async function exportPNG() {
   const liveTheme = document.documentElement.dataset.theme || null;
 
   try {
-    // Constrain the output canvas to the target's bounding box.
-    // Do NOT override windowWidth/windowHeight — that forces html2canvas to
-    // re-render the page in a virtual viewport of that size, which breaks
-    // sticky-positioned children like the table <thead> (renders with the
-    // wrong background colour).
+    // Re-measure after the wrap restyle so the canvas matches the
+    // shrink-wrapped width, not whatever it was before.
     const rect = target.getBoundingClientRect();
     const canvas = await html2canvas(target, {
       backgroundColor: '#0A1520',
@@ -82,6 +96,9 @@ export async function exportPNG() {
     if (wrapEl && prevWrap) {
       wrapEl.style.overflow  = prevWrap.overflow;
       wrapEl.style.maxHeight = prevWrap.maxHeight;
+      if (prevWrap.display)   wrapEl.style.display  = prevWrap.display;  else wrapEl.style.removeProperty('display');
+      if (prevWrap.width)     wrapEl.style.width    = prevWrap.width;    else wrapEl.style.removeProperty('width');
+      if (prevWrap.maxWidth)  wrapEl.style.maxWidth = prevWrap.maxWidth; else wrapEl.style.removeProperty('max-width');
     }
   }
 }
