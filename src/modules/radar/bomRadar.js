@@ -13,7 +13,12 @@
 //
 // PNG URL pattern (HTTPS, verified live 2026-05-28):
 //   https://www.bom.gov.au/radar/<IDR>.T.<YYYYMMDDHHMM>.png
-//   timestamp is UTC, aligned to a 6-minute boundary.
+//   timestamp is UTC. The published cadence for individual radars is
+//   ~5 minutes, but the per-scan offset within each 5-minute window is
+//   not stable across radars or sessions (observed for IDR712: minutes
+//   ending in 4 or 9 — i.e. one minute before each round 5-minute boundary).
+//   Frame discovery therefore probes at a 1-minute stride rather than
+//   assuming a cadence-aligned grid.
 //
 // Bounds are computed from radar site centre + range (azimuthal equidistant
 // approximated as a lat/lng rectangle). At Sydney's latitude over 256 km
@@ -25,7 +30,10 @@ const BOM_RADAR_PATH = '/radar/';
 const DEFAULT_BOM_PANE = 'atmos-radar-pane';
 
 const DEFAULT_IDR = 'IDR712';
-const DEFAULT_CADENCE_MINUTES = 6;
+const DEFAULT_CADENCE_MINUTES = 5; // informational; actual stride below
+const DEFAULT_PROBE_STEP_MINUTES = 1;
+const DEFAULT_HISTORY_HORIZON_MINUTES = 90;
+const MIN_FRAMES_FOR_ANIMATION = 2;
 const DEFAULT_FRAME_COUNT = 10;
 const DEFAULT_FRAME_INTERVAL_MS = 500;
 const DEFAULT_LOOP_PAUSE_MS = 1000;
@@ -74,11 +82,6 @@ function formatUtcTimestamp(date) {
   );
 }
 
-function roundDownToCadence(date, cadenceMinutes) {
-  const ms = cadenceMinutes * 60 * 1000;
-  return new Date(Math.floor(date.getTime() / ms) * ms);
-}
-
 function buildFrameUrl(idr, timestampStr) {
   return `${BOM_RADAR_HOST}${BOM_RADAR_PATH}${idr}.T.${timestampStr}.png`;
 }
@@ -103,29 +106,45 @@ function probeFrameUrl(url, timeoutMs) {
 
 export async function fetchRecentBomFrames({
   idr = DEFAULT_IDR,
-  cadenceMinutes = DEFAULT_CADENCE_MINUTES,
   count = DEFAULT_FRAME_COUNT,
   now = Date.now(),
-  probeTimeoutMs = DEFAULT_PRELOAD_TIMEOUT_MS
+  probeTimeoutMs = DEFAULT_PRELOAD_TIMEOUT_MS,
+  stepMinutes = DEFAULT_PROBE_STEP_MINUTES,
+  historyMinutes = DEFAULT_HISTORY_HORIZON_MINUTES,
+  // Accepted for backwards compatibility; not used as probe stride.
+  // See header comment — BoM's per-scan offset within the cadence window
+  // is not stable, so probing at a 1-min stride is more reliable than
+  // a cadence-aligned grid walk.
+  cadenceMinutes = DEFAULT_CADENCE_MINUTES // eslint-disable-line no-unused-vars
 } = {}) {
-  const cadenceMs = cadenceMinutes * 60 * 1000;
-  const start = roundDownToCadence(new Date(now), cadenceMinutes);
-  const maxAttempts = count * 2;
+  void cadenceMinutes;
+  const stepMs = stepMinutes * 60 * 1000;
+  const startBucket = new Date(Math.floor(now / stepMs) * stepMs);
+  const maxAttempts = Math.max(count * 2, Math.ceil(historyMinutes / stepMinutes));
   const frames = [];
+  const seenUrls = new Set();
 
   for (let i = 0; i < maxAttempts && frames.length < count; i++) {
-    const ts = new Date(start.getTime() - i * cadenceMs);
+    const ts = new Date(startBucket.getTime() - i * stepMs);
     const stamp = formatUtcTimestamp(ts);
     const url = buildFrameUrl(idr, stamp);
+    if (seenUrls.has(url)) continue;
     const ok = await probeFrameUrl(url, probeTimeoutMs);
-    if (ok) frames.push({ timestamp: ts, url });
+    if (ok) {
+      frames.push({ timestamp: ts, url });
+      seenUrls.add(url);
+    }
   }
 
-  if (!frames.length) {
-    throw new Error('No reachable BoM radar frames found');
+  if (frames.length < MIN_FRAMES_FOR_ANIMATION) {
+    throw new Error(
+      `Too few BoM radar frames available (${frames.length}); ` +
+      `animation requires at least ${MIN_FRAMES_FOR_ANIMATION}`
+    );
   }
 
   frames.sort((a, b) => a.timestamp - b.timestamp);
+  console.info('[Atmos radar] discovered frames:', frames.map((f) => f.url));
   return frames;
 }
 
