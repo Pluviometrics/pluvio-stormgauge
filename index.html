@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://cdn.sheetjs.com; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; img-src 'self' data: blob: https://*.basemaps.cartocdn.com https://server.arcgisonline.com https://radar-tiles.service.bom.gov.au https://tilecache.rainviewer.com; connect-src 'self' https://data.pluviometrics.com.au https://nsw-rainfall-analyser-api.onrender.com https://wiski.mhl.nsw.gov.au https://api.open-meteo.com https://portal.spatial.nsw.gov.au https://api.rainviewer.com https://dns.google https://radar-tiles.service.bom.gov.au https://tilecache.rainviewer.com; font-src 'self' https://cdnjs.cloudflare.com; object-src 'none'; base-uri 'self'; form-action 'self'"/>
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://cdn.sheetjs.com; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; img-src 'self' data: blob: https://*.basemaps.cartocdn.com https://server.arcgisonline.com https://radar-tiles.service.bom.gov.au https://www.bom.gov.au https://tilecache.rainviewer.com; connect-src 'self' https://data.pluviometrics.com.au https://nsw-rainfall-analyser-api.onrender.com https://wiski.mhl.nsw.gov.au https://api.open-meteo.com https://portal.spatial.nsw.gov.au https://api.rainviewer.com https://dns.google https://radar-tiles.service.bom.gov.au https://tilecache.rainviewer.com; font-src 'self' https://cdnjs.cloudflare.com; object-src 'none'; base-uri 'self'; form-action 'self'"/>
 <meta name="referrer" content="strict-origin-when-cross-origin"/>
 <link rel="icon" href="data:,"/>
 <script>try{var _t=localStorage.getItem('sgTheme');document.documentElement.dataset.theme=(_t==='dark')?'dark':'light'}catch(e){document.documentElement.dataset.theme='light'}</script>
@@ -255,6 +255,18 @@ html[data-theme="dark"] ::-webkit-scrollbar-thumb:hover { background: #2A4060; }
   font-size: 10px; font-weight: 700; letter-spacing: .08em;
   text-transform: uppercase; color: rgba(255,255,255,.32);
   flex-shrink: 0;
+}
+
+/* ── BoM static-radar timestamp label (Leaflet topright control) ─────────── */
+.leaflet-control.atmos-radar-timestamp {
+  background: rgba(0, 0, 0, 0.65);
+  color: #fff;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font: 11px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+  letter-spacing: .02em;
+  pointer-events: none;
+  box-shadow: 0 1px 4px rgba(0,0,0,.35);
 }
 
 </style>
@@ -1601,6 +1613,8 @@ let map = null;
 let atmosBaseLayer = null;
 let atmosRadarLayer = null;
 let atmosRadarPaneName = null;
+let atmosRadarTimestampControl = null;
+let atmosRadarTimestampEl = null;
 let mapSetupPromise = null;
 let lgaBoundaryLoadPromise = null;
 const mapReadyPromise = {
@@ -1662,20 +1676,58 @@ function queueAtmosRadarLayer(mapInstance) {
   window.addEventListener('atmos-modules-ready', () => initAtmosRadarLayer(mapInstance), { once: true });
 }
 
+function ensureAtmosRadarTimestampControl(mapInstance) {
+  if (atmosRadarTimestampControl) return atmosRadarTimestampControl;
+  const ctl = L.control({ position: 'topright' });
+  ctl.onAdd = function() {
+    const el = L.DomUtil.create('div', 'atmos-radar-timestamp');
+    el.textContent = '';
+    atmosRadarTimestampEl = el;
+    return el;
+  };
+  ctl.addTo(mapInstance);
+  atmosRadarTimestampControl = ctl;
+  return ctl;
+}
+
+function formatSydneyTimestamp(date) {
+  try {
+    return new Intl.DateTimeFormat('en-AU', {
+      timeZone: 'Australia/Sydney',
+      day: '2-digit', month: 'short', year: 'numeric',
+      hour: '2-digit', minute: '2-digit', hour12: false
+    }).format(date) + ' AEST/AEDT';
+  } catch (_) {
+    return date.toISOString();
+  }
+}
+
+function updateAtmosRadarTimestamp(frame) {
+  if (!atmosRadarTimestampEl || !frame) return;
+  atmosRadarTimestampEl.textContent = formatSydneyTimestamp(frame.timestamp);
+}
+
 async function initAtmosRadarLayer(mapInstance) {
   try {
-    console.info('[Atmos radar] Attempting BOM radar');
-    atmosRadarLayer = await window.bomRadar.createAvailableBomRadarLayer({
+    console.info('[Atmos radar] Attempting BOM static radar (IDR712)');
+    ensureAtmosRadarTimestampControl(mapInstance);
+    atmosRadarLayer = window.bomRadar.createBomStaticRadarLayer({
       map: mapInstance,
-      pane: atmosRadarPaneName
+      pane: atmosRadarPaneName,
+      onFrameChange: updateAtmosRadarTimestamp
     });
-    atmosRadarLayer.addTo(mapInstance);
+    await atmosRadarLayer.start();
     console.info('[Atmos radar] layer added at map zoom:', mapInstance?.getZoom?.());
     console.info('[Atmos radar] provider selected: BOM');
     return;
   } catch (error) {
     console.warn('[Atmos radar] BOM radar unavailable:', error?.message || error);
     console.info('[Atmos radar] BOM radar failed; falling back to RainViewer');
+    if (atmosRadarLayer && typeof atmosRadarLayer.stop === 'function') {
+      try { atmosRadarLayer.stop(); } catch (_) {}
+    }
+    atmosRadarLayer = null;
+    if (atmosRadarTimestampEl) atmosRadarTimestampEl.textContent = '';
   }
 
   try {
