@@ -8,8 +8,9 @@
 // IDR product code convention (trailing digit = range):
 //   IDR<NN>1 = 512 km   IDR<NN>2 = 256 km
 //   IDR<NN>3 = 128 km   IDR<NN>4 = 64 km
-// Default: IDR712 = Sydney (Terrey Hills) 256 km — Northern Beaches coverage
-// with regional context.
+// Default: IDR714 = Sydney (Terrey Hills) 64 km — Northern Beaches +
+// Sydney metro at ~0.25 km/pixel. Tighter than BoM's site default
+// (IDR713 128 km) but matches Stormgauge's NBC stormwater focus.
 //
 // PNG URL pattern (HTTPS, verified live 2026-05-28):
 //   https://www.bom.gov.au/radar/<IDR>.T.<YYYYMMDDHHMM>.png
@@ -29,7 +30,7 @@ const BOM_RADAR_HOST = 'https://www.bom.gov.au';
 const BOM_RADAR_PATH = '/radar/';
 const DEFAULT_BOM_PANE = 'atmos-radar-pane';
 
-const DEFAULT_IDR = 'IDR712';
+const DEFAULT_IDR = 'IDR714';
 const DEFAULT_CADENCE_MINUTES = 5; // informational; actual stride below
 const DEFAULT_PROBE_STEP_MINUTES = 1;
 const DEFAULT_HISTORY_HORIZON_MINUTES = 90;
