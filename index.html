@@ -3137,6 +3137,32 @@ async function accumulateDisplayedRainfall() {
     }
   };
   await Promise.all(Array.from({ length: Math.min(6, stations.length) }, worker));
+  shadeLgaBoundaryByRainfall();
+}
+
+// Tint the selected LGA polygon by the gauge-mean rainfall since midnight.
+// Uses only values already resolved into rainSinceMidnightCache — called
+// after the accumulation pool completes.
+function shadeLgaBoundaryByRainfall() {
+  if (!lgaBoundaryLayer) return;
+  const lga = document.getElementById('lgaSel')?.value;
+  if (!lga) return;
+  const values = [];
+  getDisplayStations().forEach(s => {
+    if (getLGA(s) !== lga) return;
+    const key = s.ts_id || s.station_id;
+    const cached = key ? rainSinceMidnightCache.get(key) : null;
+    if (cached && cached.value != null) values.push(cached.value);
+  });
+  if (!values.length) return;
+  const mean = values.reduce((a, b) => a + b, 0) / values.length;
+  const colour = rainColour(mean);
+  if (!colour) return;
+  lgaBoundaryLayer.setStyle({ fillColor: colour, fillOpacity: 0.25 });
+  lgaBoundaryLayer.bindTooltip(
+    `${lga}: ~${mean.toFixed(1)} mm since midnight (mean of ${values.length} gauges)`,
+    { sticky: true, direction: 'top' }
+  );
 }
 
 // â"€â"€ Analyse one station (used by multi-site analysis) â"€â"€â"€â"€â"€â"€â"€
