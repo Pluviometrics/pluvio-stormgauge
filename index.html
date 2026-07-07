@@ -2037,6 +2037,9 @@ function onLgaChange() {
 
   // Draw LGA boundary polygon
   drawLgaBoundary(lga);
+
+  // Refresh rainfall-since-midnight shading for the newly visible stations
+  accumulateDisplayedRainfall();
 }
 
 function selectLgaFromMap(lgaName) {
@@ -2131,7 +2134,9 @@ function getStationMarkerDeps() {
 }
 
 function plotAllMarkers(stations) {
-  return window.stationMarkers.plotAllMarkers(stations, getStationMarkerDeps());
+  const result = window.stationMarkers.plotAllMarkers(stations, getStationMarkerDeps());
+  accumulateDisplayedRainfall();
+  return result;
 }
 
 function isBomRainGauge(gauge) {
@@ -3026,8 +3031,11 @@ async function fetchRainfallSinceMidnight(station) {
   mid.setHours(0, 0, 0, 0);
 
   if (station?.ts_id) {
-    // MHL gauge
-    const fmt = d => d.toISOString().slice(0, 19);
+    // MHL gauge — format in local time so "midnight" is Sydney midnight, not UTC
+    const fmt = d => {
+      const p = n => String(n).padStart(2,'0');
+      return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+    };
     const params = new URLSearchParams({
       service:      'kisters',
       type:         'queryServices',
@@ -3069,6 +3077,66 @@ async function fetchRainfallSinceMidnight(station) {
   }
 
   return null;
+}
+
+// â"€â"€ Rainfall-since-midnight marker shading â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+const rainSinceMidnightCache = new Map();
+const rainSinceMidnightPromises = new Map();
+const RAIN_SHADE_CACHE_MAX_AGE_MS = 10 * 60 * 1000;
+
+async function getRainSinceMidnightCached(station) {
+  const key = station?.ts_id || station?.station_id;
+  if (!key) return null;
+  const cached = rainSinceMidnightCache.get(key);
+  if (cached && (Date.now() - cached.ts) < RAIN_SHADE_CACHE_MAX_AGE_MS) return cached.value;
+  if (rainSinceMidnightPromises.has(key)) return rainSinceMidnightPromises.get(key);
+
+  const promise = (async () => {
+    let value = null;
+    try {
+      value = await fetchRainfallSinceMidnight(station);
+    } catch (e) {
+      value = null;
+    } finally {
+      rainSinceMidnightPromises.delete(key);
+    }
+    rainSinceMidnightCache.set(key, { value, ts: Date.now() });
+    return value;
+  })();
+  rainSinceMidnightPromises.set(key, promise);
+  return promise;
+}
+
+function rainColour(mm) {
+  if (mm == null) return null;            // no data — leave neutral
+  if (mm <= 0)   return '#eeeeee';
+  if (mm < 1)    return '#d6eaf8';
+  if (mm < 5)    return '#aed6f1';
+  if (mm < 10)   return '#5dade2';
+  if (mm < 25)   return '#2e86c1';
+  if (mm < 50)   return '#1b4f72';
+  if (mm < 100)  return '#6c3483';
+  return '#4a235a';
+}
+
+function shadeMarker(station, mm) {
+  const m = markers[station.station_id] || bomRainfallMarkers[station.station_id];
+  if (!m) return;
+  const colour = rainColour(mm) || '#bbbbbb'; // grey = no data, so "has data vs not" reads clearly
+  m.setStyle({ fillColor: colour, color: colour, fillOpacity: 0.9 });
+}
+
+async function accumulateDisplayedRainfall() {
+  const stations = getFilteredDisplayStations();
+  let i = 0;
+  const worker = async () => {
+    while (i < stations.length) {
+      const station = stations[i++];
+      const mm = await getRainSinceMidnightCached(station);
+      shadeMarker(station, mm);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(6, stations.length) }, worker));
 }
 
 // â"€â"€ Analyse one station (used by multi-site analysis) â"€â"€â"€â"€â"€â"€â"€
