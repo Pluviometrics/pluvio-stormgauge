@@ -3251,7 +3251,7 @@ function renderRadarAccImage(totals) {
   sctx.putImageData(img, 0, 0);
 
   // Upscale with smoothing (blended cell edges), clipped to the LGA polygon.
-  const W = 512, H = Math.round(W * (maxLat - minLat) / (maxLon - minLon));
+  const W = 1024, H = Math.round(W * (maxLat - minLat) / (maxLon - minLon));
   const out = document.createElement('canvas');
   out.width = W; out.height = H;
   const ctx = out.getContext('2d');
@@ -3322,7 +3322,8 @@ async function updateRadarAccumulationSurface() {
     const cells = radarAccMeta.grid_rows * radarAccMeta.grid_cols;
     const totals = new Float64Array(cells).fill(NaN);
     const addValues = vals => {
-      if (!vals) return false;
+      // Length check drops stale-resolution files cached across a grid change.
+      if (!vals || vals.length !== cells) return false;
       for (let i = 0; i < cells; i++) {
         const v = vals[i];
         if (v == null) continue;
