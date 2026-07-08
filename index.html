@@ -388,6 +388,24 @@ html[data-theme="dark"] ::-webkit-scrollbar-thumb:hover { background: #2A4060; }
       </div>
     </div>
 
+    <!-- Radar accumulation surface (Northern Beaches AOI only) -->
+    <div class="sb-section" id="radarAccWrap" style="display:none">
+      <div class="lbl">Radar Accumulation</div>
+      <label style="display:flex;align-items:center;gap:6px;font-size:12px;margin:4px 0;cursor:pointer">
+        <input type="checkbox" id="radarAccOn" checked onchange="updateRadarAccumulationSurface()"/>
+        Show radar rainfall surface
+      </label>
+      <div style="display:flex;align-items:center;gap:8px;font-size:12px;margin-top:6px">
+        <span>Days back</span>
+        <input type="number" id="radarAccDays" min="0" max="90" step="1" value="0" style="width:64px"
+               onchange="updateRadarAccumulationSurface()"
+               onkeydown="if(event.key==='Enter'){this.blur();}"/>
+        <span style="color:var(--text-l)">0 = since midnight</span>
+      </div>
+      <div id="radarAccLegend" style="margin-top:8px;font-size:11px;line-height:1.8"></div>
+      <div id="radarAccNote" style="margin-top:4px;font-size:11px;color:var(--text-l)"></div>
+    </div>
+
     <!-- Search -->
     <div class="sb-section">
       <div class="lbl">Search Stations</div>
@@ -2040,6 +2058,9 @@ function onLgaChange() {
 
   // Refresh rainfall-since-midnight shading for the newly visible stations
   accumulateDisplayedRainfall();
+
+  // Radar accumulation surface (shows only for the Northern Beaches AOI)
+  updateRadarAccumulationSurface();
 }
 
 function selectLgaFromMap(lgaName) {
@@ -3158,11 +3179,194 @@ function shadeLgaBoundaryByRainfall() {
   const mean = values.reduce((a, b) => a + b, 0) / values.length;
   const colour = rainColour(mean);
   if (!colour) return;
-  lgaBoundaryLayer.setStyle({ fillColor: colour, fillOpacity: 0.25 });
+  // When the radar surface is drawn, keep the polygon as outline only so the
+  // flat tint doesn't sit over the spatial shading.
+  lgaBoundaryLayer.setStyle({ fillColor: colour, fillOpacity: radarAccActive ? 0.03 : 0.25 });
   lgaBoundaryLayer.bindTooltip(
     `${lga}: ~${mean.toFixed(1)} mm since midnight (mean of ${values.length} gauges)`,
     { sticky: true, direction: 'top' }
   );
+}
+
+// â"€â"€ Radar accumulation surface (Lizard-derived, NB AOI) â"€â"€â"€â"€â"€
+const RADAR_ACC_BASE = 'https://data.pluviometrics.com.au/radar/nb';
+const RADAR_ACC_LGA = 'Northern Beaches';
+const RADAR_ACC_PANE = 'radar-acc-pane';
+let radarAccMeta = null;
+let radarAccToday = null;               // { fetchedAt, data }
+let radarAccOverlay = null;
+let radarAccActive = false;
+let radarAccRunId = 0;
+const radarAccDailyCache = new Map();   // date -> values_mm array | null (unavailable)
+
+function radarAccColour(mm) {
+  if (mm == null || !isFinite(mm) || mm < 0.2) return null;   // transparent
+  if (mm < 1)   return [214, 234, 248];
+  if (mm < 5)   return [174, 214, 241];
+  if (mm < 10)  return [93, 173, 226];
+  if (mm < 25)  return [46, 134, 193];
+  if (mm < 50)  return [27, 79, 114];
+  if (mm < 100) return [108, 52, 131];
+  return [74, 35, 90];
+}
+
+async function fetchRadarAccJson(name) {
+  const resp = await fetch(`${RADAR_ACC_BASE}/${name}?v=${Math.floor(Date.now() / 600000)}`, { cache: 'no-store' });
+  if (!resp.ok) throw new Error(`${name} ${resp.status}`);
+  return resp.json();
+}
+
+function radarAccAddDays(dateStr, n) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d) + n * 86400000).toISOString().slice(0, 10);
+}
+
+async function getRadarAccDaily(date) {
+  if (radarAccDailyCache.has(date)) return radarAccDailyCache.get(date);
+  let values = null;
+  try {
+    values = (await fetchRadarAccJson(`daily/${date}.json`)).values_mm;
+  } catch (e) {
+    values = null;
+  }
+  radarAccDailyCache.set(date, values);
+  return values;
+}
+
+function renderRadarAccImage(totals) {
+  const rows = radarAccMeta.grid_rows, cols = radarAccMeta.grid_cols;
+  const [minLon, minLat, maxLon, maxLat] = radarAccMeta.bbox;
+  const src = document.createElement('canvas');
+  src.width = cols; src.height = rows;
+  const sctx = src.getContext('2d');
+  const img = sctx.createImageData(cols, rows);
+  for (let i = 0; i < rows * cols; i++) {
+    const rgb = radarAccColour(Number.isNaN(totals[i]) ? null : totals[i]);
+    if (!rgb) continue;
+    img.data[i * 4]     = rgb[0];
+    img.data[i * 4 + 1] = rgb[1];
+    img.data[i * 4 + 2] = rgb[2];
+    img.data[i * 4 + 3] = 153;   // ~0.6 alpha
+  }
+  sctx.putImageData(img, 0, 0);
+
+  // Upscale with smoothing (blended cell edges), clipped to the LGA polygon.
+  const W = 512, H = Math.round(W * (maxLat - minLat) / (maxLon - minLon));
+  const out = document.createElement('canvas');
+  out.width = W; out.height = H;
+  const ctx = out.getContext('2d');
+  const feature = lgaBoundaryCache[RADAR_ACC_LGA];
+  if (feature?.geometry) {
+    const toX = lon => (lon - minLon) / (maxLon - minLon) * W;
+    const toY = lat => (maxLat - lat) / (maxLat - minLat) * H;
+    const path = new Path2D();
+    const addRing = ring => {
+      ring.forEach(([lon, lat], i) => {
+        if (i === 0) path.moveTo(toX(lon), toY(lat));
+        else path.lineTo(toX(lon), toY(lat));
+      });
+      path.closePath();
+    };
+    const g = feature.geometry;
+    if (g.type === 'Polygon') g.coordinates.forEach(addRing);
+    else if (g.type === 'MultiPolygon') g.coordinates.forEach(poly => poly.forEach(addRing));
+    ctx.clip(path, 'evenodd');
+  }
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(src, 0, 0, W, H);
+  return out.toDataURL('image/png');
+}
+
+function renderRadarAccLegend() {
+  const el = document.getElementById('radarAccLegend');
+  if (!el || el.dataset.built) return;
+  el.dataset.built = '1';
+  const bands = [['<1', '#d6eaf8'], ['1-5', '#aed6f1'], ['5-10', '#5dade2'], ['10-25', '#2e86c1'],
+                 ['25-50', '#1b4f72'], ['50-100', '#6c3483'], ['100+', '#4a235a']];
+  el.innerHTML = bands.map(([label, colour]) =>
+    `<span style="display:inline-flex;align-items:center;gap:3px;margin-right:6px;white-space:nowrap">` +
+    `<span style="width:10px;height:10px;border-radius:2px;background:${colour};display:inline-block"></span>${label}</span>`
+  ).join('') + '<span style="white-space:nowrap">mm</span>';
+}
+
+function removeRadarAccSurface() {
+  if (radarAccOverlay && map && map.hasLayer(radarAccOverlay)) map.removeLayer(radarAccOverlay);
+  radarAccOverlay = null;
+  if (radarAccActive) {
+    radarAccActive = false;
+    shadeLgaBoundaryByRainfall();
+  }
+}
+
+async function updateRadarAccumulationSurface() {
+  const runId = ++radarAccRunId;
+  const wrap = document.getElementById('radarAccWrap');
+  const lga = document.getElementById('lgaSel')?.value;
+  const isNb = lga === RADAR_ACC_LGA;
+  if (wrap) wrap.style.display = isNb ? '' : 'none';
+  if (!isNb || !document.getElementById('radarAccOn')?.checked || !map) {
+    removeRadarAccSurface();
+    return;
+  }
+
+  const note = document.getElementById('radarAccNote');
+  try {
+    if (!radarAccMeta) radarAccMeta = await fetchRadarAccJson('metadata.json');
+    if (!radarAccToday || (Date.now() - radarAccToday.fetchedAt) > 10 * 60 * 1000) {
+      radarAccToday = { fetchedAt: Date.now(), data: await fetchRadarAccJson('today.json') };
+    }
+    const today = radarAccToday.data;
+    const days = Math.max(0, Math.min(90, Math.round(Number(document.getElementById('radarAccDays')?.value) || 0)));
+
+    const cells = radarAccMeta.grid_rows * radarAccMeta.grid_cols;
+    const totals = new Float64Array(cells).fill(NaN);
+    const addValues = vals => {
+      if (!vals) return false;
+      for (let i = 0; i < cells; i++) {
+        const v = vals[i];
+        if (v == null) continue;
+        totals[i] = (Number.isNaN(totals[i]) ? 0 : totals[i]) + v;
+      }
+      return true;
+    };
+    addValues(today.values_mm);
+    let daysUsed = 0;
+    for (let n = 1; n <= days; n++) {
+      if (addValues(await getRadarAccDaily(radarAccAddDays(today.date, -n)))) daysUsed++;
+      if (runId !== radarAccRunId) return;   // superseded by a newer request
+    }
+    if (runId !== radarAccRunId) return;
+
+    const url = renderRadarAccImage(totals);
+    if (!radarAccOverlay) {
+      const pane = map.getPane(RADAR_ACC_PANE) || map.createPane(RADAR_ACC_PANE);
+      pane.style.zIndex = '380';           // above tiles, below vectors/markers
+      pane.style.pointerEvents = 'none';
+      radarAccOverlay = L.imageOverlay(url, radarAccMeta.leaflet_bounds, { pane: RADAR_ACC_PANE }).addTo(map);
+    } else {
+      radarAccOverlay.setUrl(url);
+      if (!map.hasLayer(radarAccOverlay)) radarAccOverlay.addTo(map);
+    }
+    if (!radarAccActive) {
+      radarAccActive = true;
+      shadeLgaBoundaryByRainfall();
+    }
+
+    renderRadarAccLegend();
+    if (note) {
+      const asOf = new Date(today.as_of_utc);
+      note.textContent =
+        (days === 0 ? 'Since midnight' : `Last ${days} day${days > 1 ? 's' : ''} + today`) +
+        ` · radar as of ${asOf.toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit' })}` +
+        (days > daysUsed ? ` · ${days - daysUsed} day(s) unavailable` : '') +
+        ' · uncalibrated radar — gauges remain authoritative';
+    }
+  } catch (e) {
+    console.warn('[Radar accumulation] unavailable:', e.message);
+    removeRadarAccSurface();
+    if (note) note.textContent = 'Radar accumulation data unavailable.';
+  }
 }
 
 // â"€â"€ Analyse one station (used by multi-site analysis) â"€â"€â"€â"€â"€â"€â"€
