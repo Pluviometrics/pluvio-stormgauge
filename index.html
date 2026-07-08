@@ -3180,12 +3180,17 @@ function shadeLgaBoundaryByRainfall() {
   const colour = rainColour(mean);
   if (!colour) return;
   // When the radar surface is drawn, keep the polygon as outline only so the
-  // flat tint doesn't sit over the spatial shading.
+  // flat tint doesn't sit over the spatial shading, and drop the LGA-wide
+  // tooltip — hovering then reports per-cell radar totals instead.
   lgaBoundaryLayer.setStyle({ fillColor: colour, fillOpacity: radarAccActive ? 0.03 : 0.25 });
-  lgaBoundaryLayer.bindTooltip(
-    `${lga}: ~${mean.toFixed(1)} mm since midnight (mean of ${values.length} gauges)`,
-    { sticky: true, direction: 'top' }
-  );
+  if (radarAccActive) {
+    lgaBoundaryLayer.unbindTooltip();
+  } else {
+    lgaBoundaryLayer.bindTooltip(
+      `${lga}: ~${mean.toFixed(1)} mm since midnight (mean of ${values.length} gauges)`,
+      { sticky: true, direction: 'top' }
+    );
+  }
 }
 
 // â"€â"€ Radar accumulation surface (Lizard-derived, NB AOI) â"€â"€â"€â"€â"€
@@ -3318,7 +3323,9 @@ function renderRadarAccImage(totals, lo, hi) {
   for (let i = 0; i < rows * cols; i++) {
     const v = totals[i];
     if (Number.isNaN(v) || v < RADAR_ACC_MIN_MM) continue;
-    const rgb = radarHeatColour(span < 0.5 ? 0.35 : (v - lo) / span);
+    // Near-uniform fields render solid ramp-base blue — a mid-ramp tint at
+    // this alpha vanishes against the light basemap.
+    const rgb = radarHeatColour(span < 0.5 ? 0 : (v - lo) / span);
     img.data[i * 4]     = rgb[0];
     img.data[i * 4 + 1] = rgb[1];
     img.data[i * 4 + 2] = rgb[2];
@@ -3374,13 +3381,55 @@ function renderRadarAccLegend(lo, hi) {
     `<span>${fmt(lo)}</span><span>${fmt((lo + hi) / 2)}</span><span>${fmt(hi)} mm</span></div>`;
 }
 
+// Per-cell hover: while the surface is up, hovering inside the LGA shows the
+// hovered grid cell's calibrated total instead of an LGA-wide figure.
+let radarAccGridState = null;      // { totals } — calibrated, post-bias
+let radarAccCellTooltip = null;
+let radarAccHoverWired = false;
+
+function closeRadarAccCellTooltip() {
+  if (radarAccCellTooltip && map && map.hasLayer(radarAccCellTooltip)) map.removeLayer(radarAccCellTooltip);
+}
+
+function wireRadarAccHover() {
+  if (radarAccHoverWired || !map) return;
+  radarAccHoverWired = true;
+  map.on('mousemove', e => {
+    if (!radarAccGridState || !radarAccActive || !radarAccMeta) { closeRadarAccCellTooltip(); return; }
+    const { lat, lng } = e.latlng;
+    const [minLon, minLat, maxLon, maxLat] = radarAccMeta.bbox;
+    if (lng < minLon || lng > maxLon || lat < minLat || lat > maxLat) { closeRadarAccCellTooltip(); return; }
+    const feature = lgaBoundaryCache[RADAR_ACC_LGA];
+    if (feature?.geometry && !pointInGeometry(lat, lng, feature.geometry)) { closeRadarAccCellTooltip(); return; }
+    const rows = radarAccMeta.grid_rows, cols = radarAccMeta.grid_cols;
+    const row = Math.min(rows - 1, Math.max(0, Math.floor((maxLat - lat) / (maxLat - minLat) * rows)));
+    const col = Math.min(cols - 1, Math.max(0, Math.floor((lng - minLon) / (maxLon - minLon) * cols)));
+    const v = radarAccGridState.totals[row * cols + col];
+    if (Number.isNaN(v)) { closeRadarAccCellTooltip(); return; }
+    if (!radarAccCellTooltip) {
+      radarAccCellTooltip = L.tooltip({ direction: 'top', offset: [0, -8], opacity: 0.95 });
+    }
+    radarAccCellTooltip.setLatLng(e.latlng).setContent(`${v.toFixed(1)} mm`);
+    if (!map.hasLayer(radarAccCellTooltip)) radarAccCellTooltip.addTo(map);
+  });
+  map.on('mouseout', closeRadarAccCellTooltip);
+}
+
 function removeRadarAccSurface() {
   if (radarAccOverlay && map && map.hasLayer(radarAccOverlay)) map.removeLayer(radarAccOverlay);
   radarAccOverlay = null;
+  radarAccGridState = null;
+  closeRadarAccCellTooltip();
   if (radarAccActive) {
     radarAccActive = false;
     shadeLgaBoundaryByRainfall();
   }
+}
+
+function sydneyTodayDateString() {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Australia/Sydney', year: 'numeric', month: '2-digit', day: '2-digit'
+  }).format(new Date());
 }
 
 async function updateRadarAccumulationSurface() {
@@ -3400,12 +3449,21 @@ async function updateRadarAccumulationSurface() {
     if (!radarAccToday || (Date.now() - radarAccToday.fetchedAt) > 10 * 60 * 1000) {
       // Prefer the 250 m BoM feed for today when it covers the day so far;
       // fall back to the 3-hourly Lizard feed otherwise (transition days).
+      const sydToday = sydneyTodayDateString();
       let data = null, fine = false;
       try {
         const j = await fetchRadarAccJson('today.json', RADAR_ACC_BASE2);
-        if (radarAccV2Coverage(j) >= RADAR_ACC_COVERAGE_MIN) { data = j; fine = true; }
+        if (j.date === sydToday && radarAccV2Coverage(j) >= RADAR_ACC_COVERAGE_MIN) { data = j; fine = true; }
       } catch (e) { /* v2 today unavailable */ }
       if (!data) data = await fetchRadarAccJson('today.json');
+      if (data.date !== sydToday) {
+        // Just after Sydney midnight the published file can still be
+        // yesterday's — don't render it mislabelled as "since midnight".
+        radarAccToday = null;
+        removeRadarAccSurface();
+        if (note) note.textContent = "Awaiting today's first radar update.";
+        return;
+      }
       radarAccToday = { fetchedAt: Date.now(), data, fine };
     }
     const today = radarAccToday.data;
@@ -3471,6 +3529,8 @@ async function updateRadarAccumulationSurface() {
       radarAccOverlay.setUrl(url);
       if (!map.hasLayer(radarAccOverlay)) radarAccOverlay.addTo(map);
     }
+    radarAccGridState = { totals };
+    wireRadarAccHover();
     if (!radarAccActive) {
       radarAccActive = true;
       shadeLgaBoundaryByRainfall();
@@ -3494,6 +3554,12 @@ async function updateRadarAccumulationSurface() {
     if (note) note.textContent = 'Radar accumulation data unavailable.';
   }
 }
+
+// Keep the surface current — today.json refreshes on a 10-minute TTL, so an
+// idle session re-renders as new frames land instead of freezing on load.
+setInterval(() => {
+  if (document.getElementById('radarAccOn')?.checked) updateRadarAccumulationSurface();
+}, 10 * 60 * 1000);
 
 // â"€â"€ Analyse one station (used by multi-site analysis) â"€â"€â"€â"€â"€â"€â"€
 async function analyseStation(station, dur, fromDt, toDt) {
