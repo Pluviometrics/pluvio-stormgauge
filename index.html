@@ -3189,7 +3189,9 @@ function shadeLgaBoundaryByRainfall() {
 }
 
 // â"€â"€ Radar accumulation surface (Lizard-derived, NB AOI) â"€â"€â"€â"€â"€
-const RADAR_ACC_BASE = 'https://data.pluviometrics.com.au/radar/nb';
+const RADAR_ACC_BASE = 'https://data.pluviometrics.com.au/radar/nb';    // Lizard, ~5.5 km native
+const RADAR_ACC_BASE2 = 'https://data.pluviometrics.com.au/radar/nb2';  // BoM IDR714, ~250 m native
+const RADAR_ACC_COVERAGE_MIN = 0.9;   // required frame coverage to prefer the 250 m source
 const RADAR_ACC_LGA = 'Northern Beaches';
 const RADAR_ACC_PANE = 'radar-acc-pane';
 let radarAccMeta = null;
@@ -3224,10 +3226,20 @@ function radarHeatColour(t) {
   return RADAR_HEAT_STOPS[RADAR_HEAT_STOPS.length - 1][1];
 }
 
-async function fetchRadarAccJson(name) {
-  const resp = await fetch(`${RADAR_ACC_BASE}/${name}?v=${Math.floor(Date.now() / 600000)}`, { cache: 'no-store' });
+async function fetchRadarAccJson(name, base = RADAR_ACC_BASE) {
+  const resp = await fetch(`${base}/${name}?v=${Math.floor(Date.now() / 600000)}`, { cache: 'no-store' });
   if (!resp.ok) throw new Error(`${name} ${resp.status}`);
   return resp.json();
+}
+
+// Frame coverage of a v2 (BoM) file over its elapsed window. The BoM FTP only
+// retains ~2h, so a file that started life mid-day stays partial forever —
+// those fall back to the coarse Lizard source.
+function radarAccV2Coverage(j) {
+  const startMs = Date.parse(j.window_start_utc);
+  const endMs = Math.min(Date.parse(j.window_end_utc), Date.now());
+  const expectedSoFar = Math.max(1, Math.floor((endMs - startMs) / 300000));
+  return (j.frames_used || 0) / expectedSoFar;
 }
 
 function radarAccAddDays(dateStr, n) {
@@ -3239,10 +3251,18 @@ async function getRadarAccDaily(date) {
   if (radarAccDailyCache.has(date)) return radarAccDailyCache.get(date);
   let entry = null;
   try {
-    const j = await fetchRadarAccJson(`daily/${date}.json`);
-    entry = { values: j.values_mm, startMs: Date.parse(j.window_start_utc) };
-  } catch (e) {
-    entry = null;
+    const j = await fetchRadarAccJson(`daily/${date}.json`, RADAR_ACC_BASE2);
+    if (radarAccV2Coverage(j) >= RADAR_ACC_COVERAGE_MIN) {
+      entry = { values: j.values_mm, startMs: Date.parse(j.window_start_utc), fine: true };
+    }
+  } catch (e) { /* no v2 file for this date */ }
+  if (!entry) {
+    try {
+      const j = await fetchRadarAccJson(`daily/${date}.json`);
+      entry = { values: j.values_mm, startMs: Date.parse(j.window_start_utc), fine: false };
+    } catch (e) {
+      entry = null;
+    }
   }
   radarAccDailyCache.set(date, entry);
   return entry;
@@ -3378,7 +3398,15 @@ async function updateRadarAccumulationSurface() {
   try {
     if (!radarAccMeta) radarAccMeta = await fetchRadarAccJson('metadata.json');
     if (!radarAccToday || (Date.now() - radarAccToday.fetchedAt) > 10 * 60 * 1000) {
-      radarAccToday = { fetchedAt: Date.now(), data: await fetchRadarAccJson('today.json') };
+      // Prefer the 250 m BoM feed for today when it covers the day so far;
+      // fall back to the 3-hourly Lizard feed otherwise (transition days).
+      let data = null, fine = false;
+      try {
+        const j = await fetchRadarAccJson('today.json', RADAR_ACC_BASE2);
+        if (radarAccV2Coverage(j) >= RADAR_ACC_COVERAGE_MIN) { data = j; fine = true; }
+      } catch (e) { /* v2 today unavailable */ }
+      if (!data) data = await fetchRadarAccJson('today.json');
+      radarAccToday = { fetchedAt: Date.now(), data, fine };
     }
     const today = radarAccToday.data;
     const days = Math.max(0, Math.min(90, Math.round(Number(document.getElementById('radarAccDays')?.value) || 0)));
@@ -3396,12 +3424,13 @@ async function updateRadarAccumulationSurface() {
       return true;
     };
     addValues(today.values_mm);
-    let daysUsed = 0;
+    let daysUsed = 0, coarseDays = radarAccToday.fine ? 0 : 1;
     let oldestStartMs = Date.parse(today.window_start_utc);
     for (let n = 1; n <= days; n++) {
       const daily = await getRadarAccDaily(radarAccAddDays(today.date, -n));
       if (daily && addValues(daily.values)) {
         daysUsed++;
+        if (!daily.fine) coarseDays++;
         if (daily.startMs && daily.startMs < oldestStartMs) oldestStartMs = daily.startMs;
       }
       if (runId !== radarAccRunId) return;   // superseded by a newer request
@@ -3452,10 +3481,11 @@ async function updateRadarAccumulationSurface() {
       const asOf = new Date(today.as_of_utc);
       note.textContent =
         (days === 0 ? 'Since midnight' : `Last ${days} day${days > 1 ? 's' : ''} + today`) +
-        ` · radar as of ${asOf.toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit' })}` +
+        ` · ${radarAccToday.fine ? '250 m' : '5.5 km'} radar as of ${asOf.toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit' })}` +
         (cal.factor
           ? ` · gauge-calibrated ×${cal.factor.toFixed(2)} (${cal.gauges} gauges)`
           : ' · uncalibrated — insufficient gauge fit') +
+        (coarseDays > 0 && coarseDays < daysUsed + 1 ? ` · ${coarseDays} coarse day(s)` : '') +
         (days > daysUsed ? ` · ${days - daysUsed} day(s) unavailable` : '');
     }
   } catch (e) {
