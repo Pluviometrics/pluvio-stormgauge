@@ -3199,15 +3199,29 @@ let radarAccActive = false;
 let radarAccRunId = 0;
 const radarAccDailyCache = new Map();   // date -> values_mm array | null (unavailable)
 
-function radarAccColour(mm) {
-  if (mm == null || !isFinite(mm) || mm < 0.2) return null;   // transparent
-  if (mm < 1)   return [214, 234, 248];
-  if (mm < 5)   return [174, 214, 241];
-  if (mm < 10)  return [93, 173, 226];
-  if (mm < 25)  return [46, 134, 193];
-  if (mm < 50)  return [27, 79, 114];
-  if (mm < 100) return [108, 52, 131];
-  return [74, 35, 90];
+// Heat-map ramp (blue -> green -> yellow -> orange -> red). The ramp is
+// stretched across the 2nd-98th percentile of the current window's values so
+// spatial structure stays visible whatever the absolute totals are.
+const RADAR_ACC_MIN_MM = 0.2;      // below this a cell renders transparent
+const RADAR_HEAT_STOPS = [
+  [0.00, [43, 131, 186]],
+  [0.25, [171, 221, 164]],
+  [0.50, [255, 255, 191]],
+  [0.75, [253, 174, 97]],
+  [1.00, [215, 25, 28]]
+];
+
+function radarHeatColour(t) {
+  const x = Math.max(0, Math.min(1, t));
+  for (let i = 1; i < RADAR_HEAT_STOPS.length; i++) {
+    const [t1, c1] = RADAR_HEAT_STOPS[i];
+    if (x <= t1) {
+      const [t0, c0] = RADAR_HEAT_STOPS[i - 1];
+      const f = (x - t0) / (t1 - t0);
+      return [0, 1, 2].map(k => Math.round(c0[k] + (c1[k] - c0[k]) * f));
+    }
+  }
+  return RADAR_HEAT_STOPS[RADAR_HEAT_STOPS.length - 1][1];
 }
 
 async function fetchRadarAccJson(name) {
@@ -3223,30 +3237,72 @@ function radarAccAddDays(dateStr, n) {
 
 async function getRadarAccDaily(date) {
   if (radarAccDailyCache.has(date)) return radarAccDailyCache.get(date);
-  let values = null;
+  let entry = null;
   try {
-    values = (await fetchRadarAccJson(`daily/${date}.json`)).values_mm;
+    const j = await fetchRadarAccJson(`daily/${date}.json`);
+    entry = { values: j.values_mm, startMs: Date.parse(j.window_start_utc) };
   } catch (e) {
-    values = null;
+    entry = null;
   }
-  radarAccDailyCache.set(date, values);
-  return values;
+  radarAccDailyCache.set(date, entry);
+  return entry;
 }
 
-function renderRadarAccImage(totals) {
+// Mean-field bias vs the MHL gauges inside the radar AOI, computed in the
+// browser (MHL's Cloudflare protection blocks non-browser clients, so this
+// cannot live in the pipeline). Gauge sums span exactly the radar coverage
+// window. Returns { factor, gauges }; factor null = fit too thin, apply 1.0.
+const radarAccBiasCache = new Map();
+function computeRadarAccBias(rawTotals, startMs, endMs) {
+  const key = `${startMs}|${endMs}`;
+  if (radarAccBiasCache.has(key)) return radarAccBiasCache.get(key);
+  const promise = (async () => {
+    const [minLon, minLat, maxLon, maxLat] = radarAccMeta.bbox;
+    const rows = radarAccMeta.grid_rows, cols = radarAccMeta.grid_cols;
+    const gauges = allStations.filter(s => s.ts_id &&
+      s.lat >= minLat && s.lat <= maxLat && s.lon >= minLon && s.lon <= maxLon);
+    let gaugeSum = 0, radarSum = 0, used = 0, i = 0;
+    const worker = async () => {
+      while (i < gauges.length) {
+        const g = gauges[i++];
+        const col = Math.floor((g.lon - minLon) / (maxLon - minLon) * cols);
+        const row = Math.floor((maxLat - g.lat) / (maxLat - minLat) * rows);
+        const radar = rawTotals[row * cols + col];
+        if (!(radar > 0)) continue;
+        try {
+          const readings = await fetchMhlData(g.ts_id, new Date(startMs), new Date(endMs));
+          gaugeSum += readings.reduce((s, r) => s + r.value, 0);
+          radarSum += radar;
+          used++;
+        } catch (e) { /* gauge offline — skip */ }
+      }
+    };
+    await Promise.all(Array.from({ length: 6 }, () => worker()));
+    if (used >= 5 && radarSum >= 5 && gaugeSum > 0) {
+      return { factor: Math.min(5, Math.max(0.2, gaugeSum / radarSum)), gauges: used };
+    }
+    return { factor: null, gauges: used };
+  })();
+  radarAccBiasCache.set(key, promise);
+  return promise;
+}
+
+function renderRadarAccImage(totals, lo, hi) {
   const rows = radarAccMeta.grid_rows, cols = radarAccMeta.grid_cols;
   const [minLon, minLat, maxLon, maxLat] = radarAccMeta.bbox;
+  const span = hi - lo;
   const src = document.createElement('canvas');
   src.width = cols; src.height = rows;
   const sctx = src.getContext('2d');
   const img = sctx.createImageData(cols, rows);
   for (let i = 0; i < rows * cols; i++) {
-    const rgb = radarAccColour(Number.isNaN(totals[i]) ? null : totals[i]);
-    if (!rgb) continue;
+    const v = totals[i];
+    if (Number.isNaN(v) || v < RADAR_ACC_MIN_MM) continue;
+    const rgb = radarHeatColour(span < 0.5 ? 0.35 : (v - lo) / span);
     img.data[i * 4]     = rgb[0];
     img.data[i * 4 + 1] = rgb[1];
     img.data[i * 4 + 2] = rgb[2];
-    img.data[i * 4 + 3] = 153;   // ~0.6 alpha
+    img.data[i * 4 + 3] = 165;   // ~0.65 alpha
   }
   sctx.putImageData(img, 0, 0);
 
@@ -3278,16 +3334,24 @@ function renderRadarAccImage(totals) {
   return out.toDataURL('image/png');
 }
 
-function renderRadarAccLegend() {
+function renderRadarAccLegend(lo, hi) {
   const el = document.getElementById('radarAccLegend');
-  if (!el || el.dataset.built) return;
-  el.dataset.built = '1';
-  const bands = [['<1', '#d6eaf8'], ['1-5', '#aed6f1'], ['5-10', '#5dade2'], ['10-25', '#2e86c1'],
-                 ['25-50', '#1b4f72'], ['50-100', '#6c3483'], ['100+', '#4a235a']];
-  el.innerHTML = bands.map(([label, colour]) =>
-    `<span style="display:inline-flex;align-items:center;gap:3px;margin-right:6px;white-space:nowrap">` +
-    `<span style="width:10px;height:10px;border-radius:2px;background:${colour};display:inline-block"></span>${label}</span>`
-  ).join('') + '<span style="white-space:nowrap">mm</span>';
+  if (!el) return;
+  if (hi - lo < 0.5) {
+    const [r, g, b] = radarHeatColour(0.35);
+    el.innerHTML =
+      `<span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:rgb(${r},${g},${b});vertical-align:middle"></span>` +
+      ` near-uniform ≈ ${((lo + hi) / 2).toFixed(1)} mm across the LGA`;
+    return;
+  }
+  const gradient = RADAR_HEAT_STOPS
+    .map(([t, [r, g, b]]) => `rgb(${r},${g},${b}) ${Math.round(t * 100)}%`)
+    .join(', ');
+  const fmt = v => v >= 100 ? Math.round(v) : v.toFixed(1);
+  el.innerHTML =
+    `<div style="height:10px;border-radius:3px;background:linear-gradient(to right, ${gradient})"></div>` +
+    `<div style="display:flex;justify-content:space-between;margin-top:2px">` +
+    `<span>${fmt(lo)}</span><span>${fmt((lo + hi) / 2)}</span><span>${fmt(hi)} mm</span></div>`;
 }
 
 function removeRadarAccSurface() {
@@ -3333,13 +3397,42 @@ async function updateRadarAccumulationSurface() {
     };
     addValues(today.values_mm);
     let daysUsed = 0;
+    let oldestStartMs = Date.parse(today.window_start_utc);
     for (let n = 1; n <= days; n++) {
-      if (addValues(await getRadarAccDaily(radarAccAddDays(today.date, -n)))) daysUsed++;
+      const daily = await getRadarAccDaily(radarAccAddDays(today.date, -n));
+      if (daily && addValues(daily.values)) {
+        daysUsed++;
+        if (daily.startMs && daily.startMs < oldestStartMs) oldestStartMs = daily.startMs;
+      }
       if (runId !== radarAccRunId) return;   // superseded by a newer request
     }
     if (runId !== radarAccRunId) return;
 
-    const url = renderRadarAccImage(totals);
+    // Gauge-calibrate the summed field.
+    let cal = { factor: null, gauges: 0 };
+    if (today.frames_last_used_utc) {
+      cal = await computeRadarAccBias(totals, oldestStartMs, Date.parse(today.frames_last_used_utc));
+      if (runId !== radarAccRunId) return;
+      if (cal.factor) {
+        for (let i = 0; i < cells; i++) if (!Number.isNaN(totals[i])) totals[i] *= cal.factor;
+      }
+    }
+
+    // Stretch the heat ramp across this window's own value range.
+    const valid = [];
+    for (const v of totals) if (!Number.isNaN(v) && v >= RADAR_ACC_MIN_MM) valid.push(v);
+    if (!valid.length) {
+      removeRadarAccSurface();
+      const legendEl = document.getElementById('radarAccLegend');
+      if (legendEl) legendEl.innerHTML = '';
+      if (note) note.textContent = 'No measurable radar rainfall in this window.';
+      return;
+    }
+    valid.sort((a, b) => a - b);
+    const lo = valid[Math.floor(0.02 * (valid.length - 1))];
+    const hi = valid[Math.floor(0.98 * (valid.length - 1))];
+
+    const url = renderRadarAccImage(totals, lo, hi);
     if (!radarAccOverlay) {
       const pane = map.getPane(RADAR_ACC_PANE) || map.createPane(RADAR_ACC_PANE);
       pane.style.zIndex = '380';           // above tiles, below vectors/markers
@@ -3354,14 +3447,16 @@ async function updateRadarAccumulationSurface() {
       shadeLgaBoundaryByRainfall();
     }
 
-    renderRadarAccLegend();
+    renderRadarAccLegend(lo, hi);
     if (note) {
       const asOf = new Date(today.as_of_utc);
       note.textContent =
         (days === 0 ? 'Since midnight' : `Last ${days} day${days > 1 ? 's' : ''} + today`) +
         ` · radar as of ${asOf.toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit' })}` +
-        (days > daysUsed ? ` · ${days - daysUsed} day(s) unavailable` : '') +
-        ' · uncalibrated radar — gauges remain authoritative';
+        (cal.factor
+          ? ` · gauge-calibrated ×${cal.factor.toFixed(2)} (${cal.gauges} gauges)`
+          : ' · uncalibrated — insufficient gauge fit') +
+        (days > daysUsed ? ` · ${days - daysUsed} day(s) unavailable` : '');
     }
   } catch (e) {
     console.warn('[Radar accumulation] unavailable:', e.message);
