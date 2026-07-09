@@ -1923,6 +1923,28 @@ async function hasRecentGaugeReadings(station) {
   return activeGaugePromises[station.ts_id];
 }
 
+// Probe activity for any visible gauges without a cached state, through a
+// small pool, re-filtering the list/markers as verdicts arrive (coalesced).
+let activeProbeRefreshTimer = null;
+function ensureActiveGaugeProbes(stations) {
+  const pending = (stations || []).filter(s => s.ts_id && getCachedActiveGaugeState(s.ts_id) === null);
+  if (!pending.length) return;
+  let i = 0;
+  const worker = async () => {
+    while (i < pending.length) {
+      const station = pending[i++];
+      try {
+        const active = await hasRecentGaugeReadings(station);
+        if (!active) {
+          clearTimeout(activeProbeRefreshTimer);
+          activeProbeRefreshTimer = setTimeout(() => filterList(), 800);
+        }
+      } catch (e) { /* keep visible on probe failure */ }
+    }
+  };
+  Promise.all(Array.from({ length: Math.min(6, pending.length) }, worker));
+}
+
 async function filterStationsByRecentReadings(stations) {
   const ordered = Array.isArray(stations) ? stations.slice() : [];
   const keepIds = new Set();
@@ -2039,6 +2061,9 @@ function onLgaChange() {
   const filtered = getFilteredDisplayStations();
   syncFilteredStationViews(filtered);
 
+  // Probe unknown gauges for activity; the list re-filters as results land.
+  ensureActiveGaugeProbes(filtered);
+
   // Fit map to the true LGA polygon when available, otherwise fall back to stations.
   const lgaBounds = lga ? getLgaLatLngBounds(lga) : null;
   if (lgaBounds) {
@@ -2077,6 +2102,10 @@ function selectLgaFromMap(lgaName) {
 }
 
 function stationMatchesFilters(station, q, lga) {
+  // Hide gauges the MHL activity probe has confirmed silent — a dead gauge
+  // on the map reads as data we don't actually have. Unknown (not yet
+  // probed) stays visible until the probe resolves.
+  if (station.ts_id && getCachedActiveGaugeState(station.ts_id) === false) return false;
   const searchable = `${station.name || ''} ${station.site || ''} ${station.element || ''} ${station.sourceLayer || ''} ${station.agency || ''}`.toLowerCase();
   if (q && !searchable.includes(q)) return false;
   if (lga) {
@@ -2150,6 +2179,8 @@ function getStationMarkerDeps() {
     getLGA,
     fetchWeather,
     fetchRainfallSinceMidnight,
+    fetchRainfallWindow,
+    getHeatmapDays: getRadarAccDaysSelected,
     tempIcon,
     degToCompass,
     selectStation,
@@ -3102,6 +3133,40 @@ async function fetchRainfallSinceMidnight(station) {
   }
 
   return null;
+}
+
+// Gauge total over the selected heat-map period (N days back from local
+// midnight through now). Used by the marker popup so gauge and radar
+// windows can be compared like-for-like.
+async function fetchRainfallWindow(station, days) {
+  const now = new Date();
+  const mid = new Date(now);
+  mid.setHours(0, 0, 0, 0);
+  const from = new Date(mid.getTime() - days * 86400000);
+
+  if (station?.ts_id) {
+    const readings = await fetchMhlData(station.ts_id, from, now);
+    return readings.reduce((sum, r) => sum + (r.value > 0 ? r.value : 0), 0);
+  }
+
+  if (station?.source === 'bom' || station?.isBomGauge) {
+    const bomId = getBomStationNumber(station);
+    if (!bomId) return null;
+    const params = new URLSearchParams({
+      bom_id: bomId,
+      from_dt: from.toISOString(),
+      to_dt: now.toISOString(),
+      duration_minutes: '1440'
+    });
+    const data = await api(`/bom/rainfall?${params}`);
+    return (data.readings || []).reduce((sum, r) => sum + (r.value || 0), 0);
+  }
+
+  return null;
+}
+
+function getRadarAccDaysSelected() {
+  return Math.max(0, Math.min(90, Math.round(Number(document.getElementById('radarAccDays')?.value) || 0)));
 }
 
 // â"€â"€ Rainfall-since-midnight marker shading â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
