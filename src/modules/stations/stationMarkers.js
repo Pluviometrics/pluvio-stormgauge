@@ -29,7 +29,7 @@ export function plotAllMarkers(stations, ctx) {
         const windowMm = windowRes.status==='fulfilled' ? windowRes.value : null;
         const html = `<b>${s.name}</b><br><small>${ctx.getLGA(s)}</small>`
           + (wx ? `<br><small>${ctx.tempIcon(wx.weather_code)} ${wx.temperature_c}\u00B0C &nbsp;Wind ${wx.wind_speed_kmh} km/h ${ctx.degToCompass(wx.wind_dir_deg)}<br>Rain ${rain!=null?rain.toFixed(1)+' mm':'-'} since midnight</small>` : '')
-          + (windowMm != null ? `<br><small><b>${windowMm.toFixed(1)} mm</b> over heat-map period (${days}d + today)</small>` : '');
+          + (windowMm != null ? `<br><small><b>${windowMm.toFixed(1)} mm</b> over Radar Accumulation Period (${days}d + today)</small>` : '');
         ctx.wxCache[cacheKey] = { html, ts: Date.now() };
         m.setPopupContent(html);
       } catch(e) {}
@@ -121,7 +121,7 @@ export function plotBomRainfallMarkers(gauges, ctx) {
         const condHtml = (wx
           ? `<br><small>${ctx.tempIcon(wx.weather_code)} ${wx.temperature_c}\u00B0C \u00A0 Wind ${wx.wind_speed_kmh}\u00A0km/h ${ctx.degToCompass(wx.wind_dir_deg)}${rain != null ? `<br>Rain ${rain.toFixed(1)}\u00A0mm since midnight` : ''}</small>`
           : '<br><small style="color:#aaa">Current conditions unavailable</small>')
-          + (windowMm != null ? `<br><small><b>${windowMm.toFixed(1)} mm</b> over heat-map period (${days}d + today)</small>` : '');
+          + (windowMm != null ? `<br><small><b>${windowMm.toFixed(1)} mm</b> over Radar Accumulation Period (${days}d + today)</small>` : '');
         const html = buildBomRainfallPopup(gauge, ctx) + condHtml;
         ctx.wxCache[cacheKey] = { html, ts: Date.now() };
         marker.setPopupContent(html);

@@ -1923,6 +1923,22 @@ async function hasRecentGaugeReadings(station) {
   return activeGaugePromises[station.ts_id];
 }
 
+// Dropdown counts go through the exact same filter as the station list
+// (silent-gauge exclusion, gauge-set selector, LGA match) so the number in
+// the dropdown always equals the stations actually shown.
+function lgaOptionCount(lga) {
+  return getDisplayStations().filter(s => s.active !== false && stationMatchesFilters(s, '', lga)).length;
+}
+
+function refreshLgaDropdownCounts() {
+  const lgaSel = document.getElementById('lgaSel');
+  if (!lgaSel) return;
+  [...lgaSel.options].forEach(opt => {
+    if (!opt.value) return;
+    opt.textContent = `${opt.value} (${lgaOptionCount(opt.value)})`;
+  });
+}
+
 // Probe activity for any visible gauges without a cached state, through a
 // small pool, re-filtering the list/markers as verdicts arrive (coalesced).
 let activeProbeRefreshTimer = null;
@@ -1937,7 +1953,10 @@ function ensureActiveGaugeProbes(stations) {
         const active = await hasRecentGaugeReadings(station);
         if (!active) {
           clearTimeout(activeProbeRefreshTimer);
-          activeProbeRefreshTimer = setTimeout(() => filterList(), 800);
+          activeProbeRefreshTimer = setTimeout(() => {
+            filterList();
+            refreshLgaDropdownCounts();
+          }, 800);
         }
       } catch (e) { /* keep visible on probe failure */ }
     }
@@ -1997,10 +2016,9 @@ function buildLgaDropdown() {
     ...(lgas.has('NSW Other') ? ['NSW Other'] : [])
   ];
   sorted.forEach(lga => {
-    const count = getDisplayStations().filter(s => getLGA(s) === lga && s.active !== false).length;
     const opt = document.createElement('option');
     opt.value = lga;
-    opt.textContent = `${lga} (${count})`;
+    opt.textContent = `${lga} (${lgaOptionCount(lga)})`;
     lgaSel.appendChild(opt);
   });
   lgaSel.value = 'Northern Beaches';
@@ -2721,6 +2739,7 @@ function getNbcSubStations() {
 
 function onNbcSubChange() {
   syncFilteredStationViews(getFilteredDisplayStations());
+  refreshLgaDropdownCounts();
 }
 
 // â"€â"€ MHL data fetch (browser â†’ MHL directly, no backend) â"€â"€â"€â"€
@@ -3135,7 +3154,7 @@ async function fetchRainfallSinceMidnight(station) {
   return null;
 }
 
-// Gauge total over the selected heat-map period (N days back from local
+// Gauge total over the selected Radar Accumulation Period (N days back from local
 // midnight through now). Used by the marker popup so gauge and radar
 // windows can be compared like-for-like.
 async function fetchRainfallWindow(station, days) {
