@@ -395,6 +395,10 @@ html[data-theme="dark"] ::-webkit-scrollbar-thumb:hover { background: #2A4060; }
         <input type="checkbox" id="radarAccOn" checked onchange="updateRadarAccumulationSurface()"/>
         Show radar rainfall surface
       </label>
+      <label style="display:flex;align-items:center;gap:6px;font-size:12px;margin:4px 0;cursor:pointer">
+        <input type="checkbox" id="radarAccCorrect" onchange="updateRadarAccumulationSurface()"/>
+        Anchor cells to nearby gauges (local correction)
+      </label>
       <div style="display:flex;align-items:center;gap:8px;font-size:12px;margin-top:6px">
         <span>Days back</span>
         <input type="number" id="radarAccDays" min="0" max="90" step="1" value="0" style="width:64px"
@@ -3273,43 +3277,75 @@ async function getRadarAccDaily(date) {
   return entry;
 }
 
-// Mean-field bias vs the MHL gauges inside the radar AOI, computed in the
-// browser (MHL's Cloudflare protection blocks non-browser clients, so this
-// cannot live in the pipeline). Gauge sums span exactly the radar coverage
-// window. Returns { factor, gauges }; factor null = fit too thin, apply 1.0.
-const radarAccBiasCache = new Map();
-function computeRadarAccBias(rawTotals, startMs, endMs) {
+// Local gauge correction, computed in the browser (MHL's Cloudflare
+// protection blocks non-browser clients, so this cannot live in the
+// pipeline). Each reporting gauge yields its own gauge/radar ratio for the
+// exact radar coverage window — no LGA-wide averaging. Silent gauges (no
+// readings in the window) are offline, not dry, and are excluded entirely;
+// a reporting gauge that measured 0.0 mm is real and pins its area low.
+const radarAccCalCache = new Map();
+function computeRadarAccCalibration(rawTotals, startMs, endMs) {
   const key = `${startMs}|${endMs}`;
-  if (radarAccBiasCache.has(key)) return radarAccBiasCache.get(key);
+  if (radarAccCalCache.has(key)) return radarAccCalCache.get(key);
   const promise = (async () => {
     const [minLon, minLat, maxLon, maxLat] = radarAccMeta.bbox;
     const rows = radarAccMeta.grid_rows, cols = radarAccMeta.grid_cols;
     const gauges = allStations.filter(s => s.ts_id &&
       s.lat >= minLat && s.lat <= maxLat && s.lon >= minLon && s.lon <= maxLon);
-    let gaugeSum = 0, radarSum = 0, used = 0, i = 0;
+    const points = [];
+    let i = 0;
     const worker = async () => {
       while (i < gauges.length) {
         const g = gauges[i++];
         const col = Math.floor((g.lon - minLon) / (maxLon - minLon) * cols);
         const row = Math.floor((maxLat - g.lat) / (maxLat - minLat) * rows);
         const radar = rawTotals[row * cols + col];
-        if (!(radar > 0)) continue;
+        // A trustworthy ratio needs the radar to have seen something here.
+        if (!(radar >= 0.5)) continue;
         try {
           const readings = await fetchMhlData(g.ts_id, new Date(startMs), new Date(endMs));
-          gaugeSum += readings.reduce((s, r) => s + r.value, 0);
-          radarSum += radar;
-          used++;
+          if (readings.length < 6) continue;   // offline/silent — not a zero
+          const gaugeMm = readings.reduce((s, r) => s + r.value, 0);
+          points.push({
+            lat: g.lat, lon: g.lon,
+            ratio: Math.min(10, Math.max(0.05, gaugeMm / radar))
+          });
         } catch (e) { /* gauge offline — skip */ }
       }
     };
     await Promise.all(Array.from({ length: 6 }, () => worker()));
-    if (used >= 5 && radarSum >= 5 && gaugeSum > 0) {
-      return { factor: Math.min(5, Math.max(0.2, gaugeSum / radarSum)), gauges: used };
-    }
-    return { factor: null, gauges: used };
+    return { points, gauges: points.length };
   })();
-  radarAccBiasCache.set(key, promise);
+  radarAccCalCache.set(key, promise);
   return promise;
+}
+
+// Inverse-distance-weighted ratio field: every cell is scaled by the ratios
+// of the gauges around it, dominated by the nearest — at a gauge's own cell
+// the radar total matches that gauge. Radar still supplies the spatial
+// pattern between gauges.
+function applyLocalGaugeCorrection(totals, points) {
+  const [minLon, minLat, maxLon, maxLat] = radarAccMeta.bbox;
+  const rows = radarAccMeta.grid_rows, cols = radarAccMeta.grid_cols;
+  const latStep = (maxLat - minLat) / rows, lonStep = (maxLon - minLon) / cols;
+  const kmLat = 111.13, kmLon = 111.32 * Math.cos(-33.7 * Math.PI / 180);
+  for (let r = 0; r < rows; r++) {
+    const lat = maxLat - (r + 0.5) * latStep;
+    for (let c = 0; c < cols; c++) {
+      const idx = r * cols + c;
+      if (Number.isNaN(totals[idx])) continue;
+      const lon = minLon + (c + 0.5) * lonStep;
+      let wSum = 0, fSum = 0;
+      for (const p of points) {
+        const dy = (lat - p.lat) * kmLat, dx = (lon - p.lon) * kmLon;
+        const d2 = dx * dx + dy * dy;
+        if (d2 < 1e-4) { wSum = 1; fSum = p.ratio; break; }   // on the gauge
+        const w = 1 / d2;
+        wSum += w; fSum += w * p.ratio;
+      }
+      totals[idx] *= fSum / wSum;
+    }
+  }
 }
 
 function renderRadarAccImage(totals, lo, hi) {
@@ -3495,14 +3531,15 @@ async function updateRadarAccumulationSurface() {
     }
     if (runId !== radarAccRunId) return;
 
-    // Gauge-calibrate the summed field.
-    let cal = { factor: null, gauges: 0 };
-    if (today.frames_last_used_utc) {
-      cal = await computeRadarAccBias(totals, oldestStartMs, Date.parse(today.frames_last_used_utc));
+    // Default display is the radar's own accumulation, cell by cell. The
+    // optional local correction anchors cells to nearby reporting gauges
+    // (nearest gauge dominates) — never one LGA-wide factor.
+    let cal = { points: [], gauges: 0 };
+    const wantCorrection = document.getElementById('radarAccCorrect')?.checked;
+    if (wantCorrection && today.frames_last_used_utc) {
+      cal = await computeRadarAccCalibration(totals, oldestStartMs, Date.parse(today.frames_last_used_utc));
       if (runId !== radarAccRunId) return;
-      if (cal.factor) {
-        for (let i = 0; i < cells; i++) if (!Number.isNaN(totals[i])) totals[i] *= cal.factor;
-      }
+      if (cal.points.length >= 3) applyLocalGaugeCorrection(totals, cal.points);
     }
 
     // Stretch the heat ramp across this window's own value range.
@@ -3538,13 +3575,17 @@ async function updateRadarAccumulationSurface() {
 
     renderRadarAccLegend(lo, hi);
     if (note) {
-      const asOf = new Date(today.as_of_utc);
+      // Show how far the radar has actually SEEN, not when the file was
+      // built — on the 3-hourly source these can differ by hours.
+      const coveredTo = new Date(today.frames_last_used_utc || today.as_of_utc);
       note.textContent =
         (days === 0 ? 'Since midnight' : `Last ${days} day${days > 1 ? 's' : ''} + today`) +
-        ` · ${radarAccToday.fine ? '250 m' : '5.5 km'} radar as of ${asOf.toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit' })}` +
-        (cal.factor
-          ? ` · gauge-calibrated ×${cal.factor.toFixed(2)} (${cal.gauges} gauges)`
-          : ' · uncalibrated — insufficient gauge fit') +
+        ` · ${radarAccToday.fine ? '250 m' : '5.5 km'} radar to ${coveredTo.toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit' })}` +
+        (wantCorrection
+          ? (cal.points.length >= 3
+              ? ` · anchored to ${cal.gauges} reporting gauges`
+              : ` · gauge anchoring unavailable (${cal.gauges} reporting)`)
+          : ' · raw radar accumulation') +
         (coarseDays > 0 && coarseDays < daysUsed + 1 ? ` · ${coarseDays} coarse day(s)` : '') +
         (days > daysUsed ? ` · ${days - daysUsed} day(s) unavailable` : '');
     }
