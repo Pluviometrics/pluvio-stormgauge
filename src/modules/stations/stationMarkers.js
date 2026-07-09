@@ -13,19 +13,24 @@ export function plotAllMarkers(stations, ctx) {
     });
     async function doHover() {
       m.openPopup();
-      const cached = ctx.wxCache[s.station_id];
+      const days = ctx.getHeatmapDays ? ctx.getHeatmapDays() : 0;
+      const cacheKey = `${s.station_id}|${days}`;
+      const cached = ctx.wxCache[cacheKey];
       if (cached && (Date.now() - cached.ts) < 600000) { m.setPopupContent(cached.html); return; }
       m.setPopupContent(`<b>${s.name}</b><br><small>${ctx.getLGA(s)}</small><br><small style="color:#888">Loading\u2026</small>`);
       try {
-        const [wxRes, rainRes] = await Promise.allSettled([
+        const [wxRes, rainRes, windowRes] = await Promise.allSettled([
           ctx.fetchWeather(s.lat, s.lon),
-          ctx.fetchRainfallSinceMidnight(s)
+          ctx.fetchRainfallSinceMidnight(s),
+          days > 0 && ctx.fetchRainfallWindow ? ctx.fetchRainfallWindow(s, days) : Promise.resolve(null)
         ]);
         const wx = wxRes.status==='fulfilled' ? wxRes.value : null;
         const rain = rainRes.status==='fulfilled' ? rainRes.value : null;
+        const windowMm = windowRes.status==='fulfilled' ? windowRes.value : null;
         const html = `<b>${s.name}</b><br><small>${ctx.getLGA(s)}</small>`
-          + (wx ? `<br><small>${ctx.tempIcon(wx.weather_code)} ${wx.temperature_c}\u00B0C &nbsp;Wind ${wx.wind_speed_kmh} km/h ${ctx.degToCompass(wx.wind_dir_deg)}<br>Rain ${rain!=null?rain.toFixed(1)+' mm':'-'} since midnight</small>` : '');
-        ctx.wxCache[s.station_id] = { html, ts: Date.now() };
+          + (wx ? `<br><small>${ctx.tempIcon(wx.weather_code)} ${wx.temperature_c}\u00B0C &nbsp;Wind ${wx.wind_speed_kmh} km/h ${ctx.degToCompass(wx.wind_dir_deg)}<br>Rain ${rain!=null?rain.toFixed(1)+' mm':'-'} since midnight</small>` : '')
+          + (windowMm != null ? `<br><small><b>${windowMm.toFixed(1)} mm</b> over heat-map period (${days}d + today)</small>` : '');
+        ctx.wxCache[cacheKey] = { html, ts: Date.now() };
         m.setPopupContent(html);
       } catch(e) {}
     }
@@ -99,21 +104,26 @@ export function plotBomRainfallMarkers(gauges, ctx) {
       });
     async function doBomHover() {
       marker.openPopup();
-      const cached = ctx.wxCache[gauge.station_id];
+      const days = ctx.getHeatmapDays ? ctx.getHeatmapDays() : 0;
+      const cacheKey = `${gauge.station_id}|${days}`;
+      const cached = ctx.wxCache[cacheKey];
       if (cached && (Date.now() - cached.ts) < 600000) { marker.setPopupContent(cached.html); return; }
       marker.setPopupContent(buildBomRainfallPopup(gauge, ctx) + '<br><small style="color:#aaa">Loading conditions\u2026</small>');
       try {
-        const [wxRes, rainRes] = await Promise.allSettled([
+        const [wxRes, rainRes, windowRes] = await Promise.allSettled([
           ctx.fetchWeather(gauge.lat, gauge.lon),
-          ctx.fetchRainfallSinceMidnight(gauge)
+          ctx.fetchRainfallSinceMidnight(gauge),
+          days > 0 && ctx.fetchRainfallWindow ? ctx.fetchRainfallWindow(gauge, days) : Promise.resolve(null)
         ]);
         const wx = wxRes.status === 'fulfilled' ? wxRes.value : null;
         const rain = rainRes.status === 'fulfilled' ? rainRes.value : null;
-        const condHtml = wx
+        const windowMm = windowRes.status === 'fulfilled' ? windowRes.value : null;
+        const condHtml = (wx
           ? `<br><small>${ctx.tempIcon(wx.weather_code)} ${wx.temperature_c}\u00B0C \u00A0 Wind ${wx.wind_speed_kmh}\u00A0km/h ${ctx.degToCompass(wx.wind_dir_deg)}${rain != null ? `<br>Rain ${rain.toFixed(1)}\u00A0mm since midnight` : ''}</small>`
-          : '<br><small style="color:#aaa">Current conditions unavailable</small>';
+          : '<br><small style="color:#aaa">Current conditions unavailable</small>')
+          + (windowMm != null ? `<br><small><b>${windowMm.toFixed(1)} mm</b> over heat-map period (${days}d + today)</small>` : '');
         const html = buildBomRainfallPopup(gauge, ctx) + condHtml;
-        ctx.wxCache[gauge.station_id] = { html, ts: Date.now() };
+        ctx.wxCache[cacheKey] = { html, ts: Date.now() };
         marker.setPopupContent(html);
       } catch(e) {}
     }
