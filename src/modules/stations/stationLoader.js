@@ -7,9 +7,12 @@ export async function loadStations(ctx) {
     .filter(Boolean);
   // Analysable KiWIS gauges: MHL (direct) and BoM Water Data Online (via API proxy)
   const mhlStations = stations.filter(station => station.source === 'mhl' || station.source === 'wdo');
+  // Header counts are by data source: MHL KiWIS vs BoM (Water Data Online gauges plus any BoM reference gauges).
+  const mhlOnlyCount = stations.filter(station => station.source === 'mhl').length;
+  const wdoStations = stations.filter(station => station.source === 'wdo');
   const bomStations = stations.filter(station => station.source === 'bom');
   console.info('[Pluviometrics stations] dataset URL:', ctx.stationDataUrl);
-  console.info('[Pluviometrics stations] consolidated rainfall stations loaded:', stations.length, '| MHL:', mhlStations.length, '| BOM:', bomStations.length, '| generated_at:', stationDataset.generated_at || 'unknown');
+  console.info('[Pluviometrics stations] consolidated rainfall stations loaded:', stations.length, '| MHL:', mhlOnlyCount, '| BoM WDO:', wdoStations.length, '| BoM reference:', bomStations.length, '| generated_at:', stationDataset.generated_at || 'unknown');
 
   const oliverRaw = (stationDataset.stations || []).find(s => (s.station_name || s.name || '').toLowerCase().includes('oliver st freshwater'));
   const oliverNorm = stations.find(s => (s.name || '').toLowerCase().includes('oliver st freshwater'));
@@ -41,7 +44,7 @@ export async function loadStations(ctx) {
   ctx.plotBomRainfallMarkers(bomRainfallGauges);
   ctx.buildLgaDropdown();
   ctx.invalidateMap?.('station layers loaded');
-  ctx.setStatus(true, `${mhlStations.length.toLocaleString()} MHL rainfall stations + ${bomRainfallGauges.length.toLocaleString()} BOM rainfall stations`);
+  ctx.setStatus(true, `${mhlOnlyCount.toLocaleString()} MHL rainfall stations + ${(wdoStations.length + bomRainfallGauges.length).toLocaleString()} BOM rainfall stations`);
 
   return { allStations: mhlStations, bomRainfallGauges };
 }
@@ -95,6 +98,9 @@ export function normaliseConsolidatedWdoStation(station, lat, lon) {
     station_id: String(station.station_id || tsId || '').trim(),
     station_no: String(station.station_no || '').trim(),
     ts_id: tsId || null,
+    // Every observation-union member series of the physical gauge (keeper first). The dedupe
+    // keeper is an identity, not an observation filter: reads must union all of these.
+    wdo_member_ts_ids: Array.isArray(station.wdo_member_ts_ids) ? station.wdo_member_ts_ids.map(v => String(v).trim()).filter(Boolean) : [],
     name: String(station.station_name || station.name || station.station_id || 'WDO rainfall station').trim(),
     lat: Number(station.lat),
     lon: Number(station.lon)

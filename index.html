@@ -1847,6 +1847,7 @@ async function loadStations() {
   const result = await window.stationLoader.loadStations(getStationLoaderDeps());
   allStations = result.allStations;
   bomRainfallGauges = result.bomRainfallGauges;
+  indexWdoMembers(allStations);
   warmRenderApi();
 }
 
@@ -1932,6 +1933,15 @@ function setCachedActiveGaugeState(tsId, active) {
 }
 
 async function fetchMhlTimestampPresence(tsId, fromDt, toDt, source) {
+  if (source !== 'wdo') return fetchKiwisTimestampPresence(tsId, fromDt, toDt, source);
+  const results = await Promise.allSettled(wdoSeriesIdsFor(tsId).map(id => fetchKiwisTimestampPresence(id, fromDt, toDt, source)));
+  if (results.some(r => r.status === 'fulfilled' && r.value === true)) return true;
+  const failed = results.find(r => r.status === 'rejected');
+  if (failed && !results.some(r => r.status === 'fulfilled')) throw failed.reason;
+  return false;
+}
+
+async function fetchKiwisTimestampPresence(tsId, fromDt, toDt, source) {
   const fmt = d => formatKiwisTimestamp(d, source);
   const params = new URLSearchParams({
     service:      'kisters',
@@ -2135,7 +2145,9 @@ function getBomStationNumber(station) {
 
 function canAnalyseStation(station) {
   if (!station) return false;
-  if (station.ts_id) return true;
+  // A catalogue station whose IFD record is missing or errored (ifd_status != "ok") is absent
+  // from the IFD table and must never return an AEP.
+  if (station.ts_id) return !station.ifd_status || station.ifd_status === 'ok';
   return !!station.isBomGauge && !!getBomStationNumber(station);
 }
 
@@ -2788,6 +2800,35 @@ function onNbcSubChange() {
 // â"€â"€ MHL data fetch (browser â†’ MHL directly, no backend) â"€â"€â"€â"€
 const MHL_BASE = 'https://wiski.mhl.nsw.gov.au/KiWIS/KiWIS';
 
+// BoM Water Data Online physical-gauge observation union. The catalogue's dedupe keeper is an
+// identity only; the same physical gauge can be mirrored under several ts_ids (WDO-PHYS-0019:
+// 73,601 points on the keeper, 1,012,426 on the discarded member). Every read of a WDO gauge
+// fetches all member series and merges them, one value per timestamp, never summed.
+const wdoMemberIndex = {};
+function indexWdoMembers(stations) {
+  (stations || []).forEach(s => {
+    if (s?.source !== 'wdo' || !s.ts_id) return;
+    const ids = [String(s.ts_id), ...(Array.isArray(s.wdo_member_ts_ids) ? s.wdo_member_ts_ids.map(String) : [])];
+    wdoMemberIndex[String(s.ts_id)] = [...new Set(ids.filter(Boolean))];
+  });
+}
+function wdoSeriesIdsFor(tsId) {
+  const ids = wdoMemberIndex[String(tsId)];
+  return ids && ids.length ? ids : [String(tsId)];
+}
+function mergeWdoMemberReadings(seriesList) {
+  const byEpoch = new Map();
+  seriesList.forEach(readings => (readings || []).forEach(r => {
+    const epoch = Date.parse(r.timestamp);
+    const key = Number.isFinite(epoch) ? epoch : r.timestamp;
+    const prev = byEpoch.get(key);
+    if (!prev || r.value > prev.value) byEpoch.set(key, { timestamp: r.timestamp, value: r.value });
+  }));
+  return [...byEpoch.entries()]
+    .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+    .map(([, reading]) => reading);
+}
+
 // KiWIS endpoint per gauge source. MHL is fetched directly from the browser; BoM Water Data
 // Online has no CORS, so WDO gauges go through the API's /wdo/timeseries proxy with the
 // identical query. Same response shape, same parser.
@@ -2828,6 +2869,17 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 30000) {
 }
 
 async function fetchMhlData(tsId, fromDt, toDt, debug, source) {
+  if (source !== 'wdo') return fetchKiwisSeries(tsId, fromDt, toDt, debug, source);
+  const ids = wdoSeriesIdsFor(tsId);
+  if (ids.length === 1) return fetchKiwisSeries(ids[0], fromDt, toDt, debug, source);
+  const results = await Promise.allSettled(ids.map(id => fetchKiwisSeries(id, fromDt, toDt, debug, source)));
+  const fulfilled = results.filter(r => r.status === 'fulfilled').map(r => r.value);
+  if (!fulfilled.length) throw results[0].reason;
+  if (fulfilled.length < ids.length) console.warn(`[WDO union] ${ids.length - fulfilled.length} of ${ids.length} member series failed for ts_id ${tsId}`);
+  return mergeWdoMemberReadings(fulfilled);
+}
+
+async function fetchKiwisSeries(tsId, fromDt, toDt, debug, source) {
   const fmt = d => formatKiwisTimestamp(d, source);
   const params = new URLSearchParams({
     service:      'kisters',
@@ -3179,25 +3231,8 @@ async function fetchRainfallSinceMidnight(station) {
 
   if (station?.ts_id) {
     // KiWIS gauge — Sydney local bounds so "midnight" is Sydney midnight, not UTC
-    const fmt = d => formatKiwisTimestamp(d, station.source);
-    const params = new URLSearchParams({
-      service:      'kisters',
-      type:         'queryServices',
-      request:      'getTimeseriesValues',
-      ts_id:        station.ts_id,
-      from:         fmt(mid),
-      to:           fmt(now),
-      format:       'json',
-      returnfields: 'Timestamp,Value'
-    });
-    const resp = await fetch(`${kiwisBase(station.source)}?${params}`);
-    if (!resp.ok) throw new Error(`MHL midnight fetch ${resp.status}`);
-    const data = await resp.json();
-    const rows = data?.[0]?.data || [];
-    return rows.reduce((sum, r) => {
-      const v = parseFloat(r[1]);
-      return sum + (isFinite(v) && v > 0 ? v : 0);
-    }, 0);
+    const readings = await fetchMhlData(station.ts_id, mid, now, false, station.source);
+    return readings.reduce((sum, r) => sum + (r.value > 0 ? r.value : 0), 0);
   }
 
   if (station?.source === 'bom' || station?.isBomGauge) {
