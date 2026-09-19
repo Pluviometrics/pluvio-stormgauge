@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://cdn.sheetjs.com; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; img-src 'self' data: blob: https://*.basemaps.cartocdn.com https://server.arcgisonline.com https://radar-tiles.service.bom.gov.au https://www.bom.gov.au https://tilecache.rainviewer.com; connect-src 'self' https://data.pluviometrics.com.au https://radar-data.pluviometrics.com.au https://nsw-rainfall-analyser-api.onrender.com https://wiski.mhl.nsw.gov.au https://api.open-meteo.com https://portal.spatial.nsw.gov.au https://api.rainviewer.com https://dns.google https://radar-tiles.service.bom.gov.au https://tilecache.rainviewer.com; font-src 'self' https://cdnjs.cloudflare.com; object-src 'none'; base-uri 'self'; form-action 'self'"/>
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://cdn.sheetjs.com; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; img-src 'self' data: blob: https://server.arcgisonline.com https://radar-tiles.service.bom.gov.au https://www.bom.gov.au https://tilecache.rainviewer.com; connect-src 'self' https://data.pluviometrics.com.au https://radar-data.pluviometrics.com.au https://nsw-rainfall-analyser-api.onrender.com https://wiski.mhl.nsw.gov.au https://api.open-meteo.com https://portal.spatial.nsw.gov.au https://api.rainviewer.com https://dns.google https://radar-tiles.service.bom.gov.au https://tilecache.rainviewer.com; font-src 'self' https://cdnjs.cloudflare.com; object-src 'none'; base-uri 'self'; form-action 'self'"/>
 <meta name="referrer" content="strict-origin-when-cross-origin"/>
 <link rel="icon" href="data:,"/>
 <script>try{var _t=localStorage.getItem('sgTheme');document.documentElement.dataset.theme=(_t==='dark')?'dark':'light'}catch(e){document.documentElement.dataset.theme='light'}</script>
@@ -1370,6 +1370,8 @@ function generateReliningPackages() {
 // â"€â"€ Config â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 const API = 'https://nsw-rainfall-analyser-api.onrender.com';
 const PLUVIOMETRICS_RAINFALL_STATION_DATA_URL = 'https://data.pluviometrics.com.au/pluviometrics_rainfall_stations.json';
+// BoM 15-minute current readings (last 7 days) for catalogue stations without a KiWIS series.
+const BOM_CURRENT_READINGS_URL = 'https://data.pluviometrics.com.au/bom_current_readings.json';
 
 // All durations the tool supports (matching NBC tool)
 const ALL_DURATIONS = [5,10,15,20,25,30,45,60,90,120,180,270,360,540,720,1080,1440,1800,2160,2880,4320,5760,7200,8640,10080];
@@ -1404,6 +1406,8 @@ function decodeInlineArg(value) {
 // â"€â"€ State â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 let allStations = [], selected = null, markers = {}, mode = 'recent';
 let bomRainfallGauges = [], bomRainfallMarkers = {};
+let bomCurrentReadings = null;          // bom_current_readings.json document
+let hcsByStationId = new Map();         // station_id -> its entry in that document
 let lastResults = null, allSiteResults = null;
 let lastTopDurResults = null;
 let rainChart = null, compareChart = null, rainfallTotalsChart = null;
@@ -1851,6 +1855,30 @@ async function loadStations() {
   warmRenderApi();
 }
 
+function setBomCurrentReadings(doc, index) {
+  bomCurrentReadings = doc || null;
+  hcsByStationId = index instanceof Map ? index : new Map();
+}
+
+// Readings for a BoM 15-minute station inside [fromDt, toDt], decoded from the slot array.
+function hcsReadingsFor(station, fromDt, toDt) {
+  const entry = hcsByStationId.get(String(station?.station_id || ''));
+  if (!entry || !entry.start || !Array.isArray(entry.values)) return [];
+  const stepMs = (Number(bomCurrentReadings?.interval_minutes) || 15) * 60000;
+  const start = Date.parse(entry.start);
+  const fromMs = fromDt instanceof Date ? fromDt.getTime() : Number(fromDt);
+  const toMs = toDt instanceof Date ? toDt.getTime() : Number(toDt);
+  const out = [];
+  for (let i = 0; i < entry.values.length; i++) {
+    const v = entry.values[i];
+    if (v === null || v === undefined) continue;
+    const t = start + i * stepMs;
+    if (t < fromMs || t > toMs) continue;
+    out.push({ timestamp: new Date(t).toISOString(), value: Number(v) });
+  }
+  return out;
+}
+
 // Fire-and-forget warm-up so the Render free tier is awake before the first analysis.
 // Runs once per page load, after the catalogue is in. Not awaited, not retried, result unused.
 let _renderApiWarmed = false;
@@ -1885,6 +1913,8 @@ function normaliseConsolidatedBomStation(station, lat, lon) {
 function getStationLoaderDeps() {
   return {
     stationDataUrl: PLUVIOMETRICS_RAINFALL_STATION_DATA_URL,
+    bomCurrentReadingsUrl: BOM_CURRENT_READINGS_URL,
+    setBomCurrentReadings,
     lgaBoundaryLoadPromise: ensureLgaBoundaryLoad(),
     setStatus,
     setLoadedStations: (loadedAllStations, loadedBomRainfallGauges) => {
@@ -1961,6 +1991,10 @@ async function fetchKiwisTimestampPresence(tsId, fromDt, toDt, source) {
 }
 
 async function hasRecentGaugeReadings(station) {
+  if (station?.source === 'hcs') {
+    const last = Date.parse(station.hcs_last_reading || '');
+    return Number.isFinite(last) && (Date.now() - last) <= ACTIVE_GAUGE_MAX_AGE_DAYS * 24 * 60 * 60 * 1000;
+  }
   if (!station?.ts_id) return false;
   const cached = getCachedActiveGaugeState(station.ts_id);
   if (cached !== null) return cached;
@@ -2135,6 +2169,7 @@ function getLGA(station) {
 
 function getStationSourceLabel(station) {
   if (station?.isBomGauge) return canAnalyseStation(station) ? 'BoM rainfall fallback' : (station.element || station.sourceLayer || 'BOM record');
+  if (station?.source === 'hcs') return 'BoM 15-minute rainfall';
   return 'Official live rainfall';
 }
 
@@ -2148,6 +2183,7 @@ function canAnalyseStation(station) {
   // A catalogue station whose IFD record is missing or errored (ifd_status != "ok") is absent
   // from the IFD table and must never return an AEP.
   if (station.ts_id) return !station.ifd_status || station.ifd_status === 'ok';
+  if (station.source === 'hcs') return hcsByStationId.has(String(station.station_id)) && (!station.ifd_status || station.ifd_status === 'ok');
   return !!station.isBomGauge && !!getBomStationNumber(station);
 }
 
@@ -2661,7 +2697,7 @@ async function runAnalysis() {
     const readings = rainfallData.readings;
     const intervalMinutes = rainfallData.intervalMinutes || 5;
     if (dur !== 'worst' && !isDurationSupportedForInterval(dur, intervalMinutes)) {
-      throw new Error(`${rainfallData.source} is ${intervalMinutes}-minute data. Choose a duration of at least ${intervalMinutes} minutes.`);
+      throw new Error(`${rainfallData.source} is ${intervalMinutes}-minute data. Choose a duration that is a multiple of ${intervalMinutes} minutes.`);
     }
     setLoadTxt('Loading IFD data...');
     await loadStationIfd(selected);
@@ -2944,6 +2980,23 @@ async function fetchStationRainfall(station, fromDt, toDt, durationMinutes = 30)
     };
   }
 
+  if (station?.source === 'hcs') {
+    const entry = hcsByStationId.get(String(station.station_id));
+    if (!entry) throw new Error('BoM 15-minute current readings are unavailable for this station');
+    const intervalMinutes = Number(bomCurrentReadings?.interval_minutes) || 15;
+    const readings = hcsReadingsFor(station, fromDt, toDt);
+    if (!readings.length && entry.first_reading && entry.last_reading
+        && (toDt.getTime() < Date.parse(entry.first_reading) || fromDt.getTime() > Date.parse(entry.last_reading))) {
+      throw new Error(`BoM 15-minute current readings cover ${fmtDt(new Date(entry.first_reading))} to ${fmtDt(new Date(entry.last_reading))} only`);
+    }
+    if (dbg) console.groupEnd();
+    return {
+      readings: applyRainfallQc(readings, intervalMinutes, sName),
+      source: `BoM 15-minute rainfall (HCS, last ${Number(bomCurrentReadings?.window_days) || 7} days)`,
+      intervalMinutes
+    };
+  }
+
   if (station?.source === 'bom' || station?.isBomGauge) {
     const bomId = getBomStationNumber(station);
     if (!bomId) {
@@ -3002,10 +3055,13 @@ async function fetchStationRainfall(station, fromDt, toDt, durationMinutes = 30)
   throw new Error('No rainfall data source is available for this station');
 }
 
+// A duration is supported when it is a whole multiple of the series interval: 15-minute
+// BoM stations support 15, 30, 45, 60, ... and not 5, 10, 20 or 25.
 function isDurationSupportedForInterval(durationMinutes, intervalMinutes) {
   const duration = Number(durationMinutes);
   const interval = Math.max(1, Number(intervalMinutes) || 5);
-  return Math.floor(duration / interval) >= 1;
+  if (!(duration >= interval)) return false;
+  return Math.abs(duration / interval - Math.round(duration / interval)) < 1e-9;
 }
 
 // â"€â"€ Rolling max calculation (in browser) â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
@@ -3235,6 +3291,10 @@ async function fetchRainfallSinceMidnight(station) {
     return readings.reduce((sum, r) => sum + (r.value > 0 ? r.value : 0), 0);
   }
 
+  if (station?.source === 'hcs') {
+    return hcsReadingsFor(station, mid, now).reduce((sum, r) => sum + (r.value > 0 ? r.value : 0), 0);
+  }
+
   if (station?.source === 'bom' || station?.isBomGauge) {
     // BoM gauge - sum today's readings via DWO/CDO
     const bomId = getBomStationNumber(station);
@@ -3270,6 +3330,10 @@ async function fetchRainfallWindow(station, days) {
   if (station?.ts_id) {
     const readings = await fetchMhlData(station.ts_id, from, now, false, station.source);
     return readings.reduce((sum, r) => sum + (r.value > 0 ? r.value : 0), 0);
+  }
+
+  if (station?.source === 'hcs') {
+    return hcsReadingsFor(station, from, now).reduce((sum, r) => sum + (r.value > 0 ? r.value : 0), 0);
   }
 
   if (station?.source === 'bom' || station?.isBomGauge) {
@@ -4025,8 +4089,9 @@ async function runTopPerSite(dur, fromDt, toDt, options = {}) {
   let diagZeroRaw = 0;
 
   const mhlCount = stations.filter(s => s.ts_id).length;
+  const hcsCount = stations.filter(s => s.source === 'hcs').length;
   const bomCount = stations.filter(s => !s.ts_id && (s.isBomGauge || s.source === 'bom')).length;
-  console.log(`[TopPerSite] stations selected: ${stations.length} (MHL: ${mhlCount}, BOM: ${bomCount}, lga="${lga || '(all)'}"}`);
+  console.log(`[TopPerSite] stations selected: ${stations.length} (KiWIS: ${mhlCount}, BoM 15-min: ${hcsCount}, BOM: ${bomCount}, lga="${lga || '(all)'}"}`);
 
   for (let i = 0; i < stations.length; i++) {
     const s = stations[i];
@@ -4092,8 +4157,8 @@ async function runTopPerSite(dur, fromDt, toDt, options = {}) {
     let bestResult = null;
     let bestAepVal = Infinity;
     const appliedInterval = Math.max(1, Number(intervalMinutes) || 5);
-    const skippedDurations = allDurs.filter(d => Math.floor(d / appliedInterval) < 1);
-    const usedDurations = allDurs.filter(d => Math.floor(d / appliedInterval) >= 1);
+    const skippedDurations = allDurs.filter(d => !isDurationSupportedForInterval(d, appliedInterval));
+    const usedDurations = allDurs.filter(d => isDurationSupportedForInterval(d, appliedInterval));
     console.log('[Interval Applied]', {
       stationName: s.name,
       intervalMinutes: appliedInterval,
