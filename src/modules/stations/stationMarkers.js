@@ -3,7 +3,7 @@ export function plotAllMarkers(stations, ctx) {
     const m = ctx.L.circleMarker([s.lat, s.lon], {
       radius: 5, color: 'white', weight: 1.5,
       interactive: true, bubblingMouseEvents: false,
-      fillColor: '#00847F', fillOpacity: 0.85
+      fillColor: s.source === 'hcs' ? '#1E88E5' : '#00847F', fillOpacity: 0.85
     }).bindPopup(`<b>${ctx.escapeHtml(s.name)}</b><br><small>${ctx.escapeHtml(ctx.getLGA(s))}</small>`, { autoPan: false }).bindTooltip(s.name,{
       permanent:true,
       interactive:true,
