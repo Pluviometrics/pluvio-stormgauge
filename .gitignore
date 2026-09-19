@@ -54,3 +54,6 @@ _staging_rebuild/
 data/_backup/
 data/radar_archive/
 Superseeded/snapshot-*/
+
+# Backups left beside edited files (never committed)
+*.bak
