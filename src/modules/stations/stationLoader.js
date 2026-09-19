@@ -1,18 +1,27 @@
 export async function loadStations(ctx) {
   ctx.setStatus(true, 'Loading stations...');
   await ctx.lgaBoundaryLoadPromise;
-  const stationDataset = await loadPluviometricsRainfallStationDataset(ctx.stationDataUrl);
+  const [stationDataset, bomCurrentReadings] = await Promise.all([
+    loadPluviometricsRainfallStationDataset(ctx.stationDataUrl),
+    loadBomCurrentReadings(ctx.bomCurrentReadingsUrl)
+  ]);
+  // BoM 15-minute current readings (bom_current_readings.json) give catalogue stations that
+  // have no KiWIS series a data path: they render, count in their LGA and analyse at any
+  // duration that is a multiple of 15 minutes.
+  const hcsIndex = new Map((bomCurrentReadings?.stations || []).map(entry => [String(entry.station_id), entry]));
+  ctx.setBomCurrentReadings?.(bomCurrentReadings, hcsIndex);
   const stations = (stationDataset.stations || [])
-    .map(station => normaliseConsolidatedRainfallStation(station, ctx))
+    .map(station => normaliseConsolidatedRainfallStation(station, ctx, hcsIndex))
     .filter(Boolean);
   // Analysable KiWIS gauges: MHL (direct) and BoM Water Data Online (via API proxy)
-  const mhlStations = stations.filter(station => station.source === 'mhl' || station.source === 'wdo');
+  const mhlStations = stations.filter(station => station.source === 'mhl' || station.source === 'wdo' || station.source === 'hcs');
+  const hcsCount = stations.filter(station => station.source === 'hcs').length;
   // Header counts are by data source: MHL KiWIS vs BoM (Water Data Online gauges plus any BoM reference gauges).
   const mhlOnlyCount = stations.filter(station => station.source === 'mhl').length;
   const wdoStations = stations.filter(station => station.source === 'wdo');
   const bomStations = stations.filter(station => station.source === 'bom');
   console.info('[Pluviometrics stations] dataset URL:', ctx.stationDataUrl);
-  console.info('[Pluviometrics stations] consolidated rainfall stations loaded:', stations.length, '| MHL:', mhlOnlyCount, '| BoM WDO:', wdoStations.length, '| BoM reference:', bomStations.length, '| generated_at:', stationDataset.generated_at || 'unknown');
+  console.info('[Pluviometrics stations] consolidated rainfall stations loaded:', stations.length, '| MHL:', mhlOnlyCount, '| BoM WDO:', wdoStations.length, '| BoM 15-min current:', hcsCount, '| BoM reference:', bomStations.length, '| generated_at:', stationDataset.generated_at || 'unknown');
 
   const oliverRaw = (stationDataset.stations || []).find(s => (s.station_name || s.name || '').toLowerCase().includes('oliver st freshwater'));
   const oliverNorm = stations.find(s => (s.name || '').toLowerCase().includes('oliver st freshwater'));
@@ -44,9 +53,24 @@ export async function loadStations(ctx) {
   ctx.plotBomRainfallMarkers(bomRainfallGauges);
   ctx.buildLgaDropdown();
   ctx.invalidateMap?.('station layers loaded');
-  ctx.setStatus(true, `${mhlOnlyCount.toLocaleString()} MHL rainfall stations + ${(wdoStations.length + bomRainfallGauges.length).toLocaleString()} BOM rainfall stations`);
+  ctx.setStatus(true, `${mhlOnlyCount.toLocaleString()} MHL rainfall stations + ${(wdoStations.length + hcsCount + bomRainfallGauges.length).toLocaleString()} BOM rainfall stations`);
 
-  return { allStations: mhlStations, bomRainfallGauges };
+  return { allStations: mhlStations, bomRainfallGauges, bomCurrentReadings };
+}
+
+export async function loadBomCurrentReadings(url) {
+  if (!url) return null;
+  try {
+    const resp = await fetch(`${url}?v=${Date.now()}`, { cache: 'no-store' });
+    if (!resp.ok) throw new Error(`${url} returned ${resp.status}`);
+    const data = await resp.json();
+    if (!Array.isArray(data?.stations)) throw new Error(`${url} is missing stations[]`);
+    console.info('[Pluviometrics stations] BoM current readings:', data.stations.length, 'stations | generated_at:', data.generated_at, '| latest snapshot:', data.snapshots?.latest_generation);
+    return data;
+  } catch (e) {
+    console.warn('[Pluviometrics stations] BoM current readings unavailable:', e?.message || e);
+    return null;
+  }
 }
 
 export async function loadPluviometricsRainfallStationDataset(stationDataUrl) {
@@ -62,7 +86,7 @@ export function extractDataIdentifierId(station, prefix) {
   return raw.toLowerCase().startsWith(`${prefix}:`) ? raw.slice(prefix.length + 1) : '';
 }
 
-export function normaliseConsolidatedRainfallStation(station, ctx) {
+export function normaliseConsolidatedRainfallStation(station, ctx, hcsIndex = null) {
   if (!station || station.station_type !== 'rainfall') return null;
   const source = String(station.source || '').toLowerCase();
   const lat = Number(station.lat);
@@ -71,7 +95,26 @@ export function normaliseConsolidatedRainfallStation(station, ctx) {
   if (source === 'bom') return normaliseConsolidatedBomStation(station, lat, lon, ctx);
   if (source === 'mhl') return normaliseConsolidatedMhlStation(station, lat, lon);
   if (source === 'wdo') return normaliseConsolidatedWdoStation(station, lat, lon);
+  const hcs = hcsIndex?.get(String(station.station_id || ''));
+  if (hcs && !station.ts_id && !station.wdo_ts_id && !station.mhl_ts_id) return normaliseConsolidatedHcsStation(station, lat, lon, hcs);
   return null;
+}
+
+export function normaliseConsolidatedHcsStation(station, lat, lon, hcs) {
+  return {
+    ...station,
+    source: 'hcs',
+    active: true,
+    station_id: String(station.station_id || '').trim(),
+    station_no: String(hcs.bom_id || '').trim(),
+    bom_id: String(hcs.bom_id || '').trim(),
+    ts_id: null,
+    name: String(station.station_name || station.name || station.station_id || 'BoM rainfall station').trim(),
+    hcs_first_reading: hcs.first_reading || null,
+    hcs_last_reading: hcs.last_reading || null,
+    lat,
+    lon
+  };
 }
 
 export function normaliseConsolidatedMhlStation(station, lat, lon) {
