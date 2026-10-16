@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://cdn.sheetjs.com; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; img-src 'self' data: blob: https://server.arcgisonline.com https://radar-tiles.service.bom.gov.au https://www.bom.gov.au https://tilecache.rainviewer.com; connect-src 'self' https://data.pluviometrics.com.au https://radar-data.pluviometrics.com.au https://nsw-rainfall-analyser-api.onrender.com https://wiski.mhl.nsw.gov.au https://api.open-meteo.com https://portal.spatial.nsw.gov.au https://api.rainviewer.com https://dns.google https://radar-tiles.service.bom.gov.au https://tilecache.rainviewer.com; font-src 'self' https://cdnjs.cloudflare.com; object-src 'none'; base-uri 'self'; form-action 'self'"/>
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://cdn.sheetjs.com; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; img-src 'self' data: blob: https://server.arcgisonline.com https://radar-tiles.service.bom.gov.au https://www.bom.gov.au https://tilecache.rainviewer.com; connect-src 'self' https://data.pluviometrics.com.au https://radar-data.pluviometrics.com.au https://nsw-rainfall-analyser-api.onrender.com https://wiski.mhl.nsw.gov.au https://gauge-data.pluviometrics.com.au https://api.open-meteo.com https://portal.spatial.nsw.gov.au https://api.rainviewer.com https://dns.google https://radar-tiles.service.bom.gov.au https://tilecache.rainviewer.com; font-src 'self' https://cdnjs.cloudflare.com; object-src 'none'; base-uri 'self'; form-action 'self'"/>
 <meta name="referrer" content="strict-origin-when-cross-origin"/>
 <link rel="icon" href="data:,"/>
 <script>try{var _t=localStorage.getItem('sgTheme');document.documentElement.dataset.theme=(_t==='dark')?'dark':'light'}catch(e){document.documentElement.dataset.theme='light'}</script>
@@ -2915,9 +2915,81 @@ async function fetchMhlData(tsId, fromDt, toDt, debug, source) {
   return mergeWdoMemberReadings(fulfilled);
 }
 
-async function fetchKiwisSeries(tsId, fromDt, toDt, debug, source) {
+// Raw [[timestamp, value], ...] rows from one KiWIS-shaped JSON response (MHL, WDO proxy or mirror).
+async function fetchKiwisRows(url, debug) {
+  if (debug) console.log('[DEBUG Oliver St] MHL endpoint:', url);
+  const resp = await fetchWithTimeout(url);
+  if (!resp.ok) throw new Error(`MHL API ${resp.status}`);
+  const data = await resp.json();
+  if (!data || data.length < 1) {
+    if (debug) console.warn('[DEBUG Oliver St] MHL returned empty top-level array');
+    return [];
+  }
+  return data[0]?.data || [];
+}
+
+// MHL history mirror (PLUVIO_DATA scripts/mhl_mirror.py): mhl/{ts_id}/{YYYY}.json, one file per
+// gauge per Sydney calendar year, in the KiWIS response shape. Requested ranges older than
+// 7 days come from the mirror, up to the manifest's last_timestamp, over the leading run of
+// mirrored years. The last 7 days, and anything the manifest lacks, come from MHL directly.
+const MHL_MIRROR_BASE = 'https://gauge-data.pluviometrics.com.au/mhl';
+const MHL_MIRROR_RECENT_MS = 7 * 24 * 60 * 60 * 1000;
+let mhlMirrorManifest = null;
+function loadMhlMirrorManifest() {
+  if (!mhlMirrorManifest) {
+    mhlMirrorManifest = fetchWithTimeout(`${MHL_MIRROR_BASE}/manifest.json`, {}, 15000)
+      .then(r => (r.ok ? r.json() : null))
+      .catch(e => { console.warn('[MHL mirror] manifest unavailable; using MHL directly:', e?.message || e); return null; });
+  }
+  return mhlMirrorManifest;
+}
+const sydneyYear = ms => Number(new Intl.DateTimeFormat('en-AU', { timeZone: 'Australia/Sydney', year: 'numeric' }).format(ms));
+const sydneyYearStartMs = y => Date.UTC(y, 0, 1) - 11 * 60 * 60 * 1000; // 1 January is always AEDT (+11:00)
+
+function mergeKiwisRows(...lists) {
+  const byEpoch = new Map();
+  lists.forEach(rows => (rows || []).forEach(row => {
+    const epoch = Date.parse(row?.[0]);
+    byEpoch.set(Number.isFinite(epoch) ? epoch : row?.[0], row);
+  }));
+  return [...byEpoch.entries()]
+    .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+    .map(([, row]) => row);
+}
+
+async function fetchMhlRowsWithMirror(tsId, fromDt, toDt, debug, source) {
+  const direct = (from, to) => fetchKiwisRows(`${MHL_BASE}?${kiwisValuesParams(tsId, from, to, source)}`, debug);
+  const entry = (await loadMhlMirrorManifest())?.stations?.[String(tsId)];
+  const fromMs = fromDt.getTime();
+  const lastMs = Date.parse(entry?.last_timestamp);
+  if (!entry || !Number.isFinite(lastMs)) return direct(fromDt, toDt);
+  let mirrorEnd = Math.min(toDt.getTime(), Date.now() - MHL_MIRROR_RECENT_MS, lastMs);
+  if (!(mirrorEnd > fromMs)) return direct(fromDt, toDt);
+
+  const years = new Set(entry.years || []);
+  const files = [];
+  for (let y = sydneyYear(fromMs), endYear = sydneyYear(mirrorEnd); y <= endYear; y++) {
+    if (entry.first_year != null && y < entry.first_year) continue; // before the record: no data
+    if (!years.has(y)) { mirrorEnd = Math.min(mirrorEnd, sydneyYearStartMs(y)); break; }
+    files.push(y);
+  }
+  if (!(mirrorEnd > fromMs)) return direct(fromDt, toDt);
+
+  let mirrored;
+  try {
+    const docs = await Promise.all(files.map(y => fetchKiwisRows(`${MHL_MIRROR_BASE}/${tsId}/${y}.json`, debug)));
+    mirrored = docs.flat().filter(row => { const t = Date.parse(row?.[0]); return t >= fromMs && t <= mirrorEnd; });
+  } catch (e) {
+    console.warn(`[MHL mirror] ts_id ${tsId}: mirror read failed (${e?.message || e}); using MHL directly`);
+    return direct(fromDt, toDt);
+  }
+  const recent = await direct(new Date(mirrorEnd), toDt);
+  return mergeKiwisRows(mirrored, recent);
+}
+
+function kiwisValuesParams(tsId, fromDt, toDt, source) {
   const fmt = d => formatKiwisTimestamp(d, source);
-  const params = new URLSearchParams({
+  return new URLSearchParams({
     service:      'kisters',
     type:         'queryServices',
     request:      'getTimeseriesValues',
@@ -2927,18 +2999,13 @@ async function fetchKiwisSeries(tsId, fromDt, toDt, debug, source) {
     format:       'json',
     returnfields: 'Timestamp,Value'
   });
-  const url = `${kiwisBase(source)}?${params}`;
-  if (debug) console.log('[DEBUG Oliver St] MHL endpoint:', url);
+}
 
-  const resp = await fetchWithTimeout(url);
-  if (!resp.ok) throw new Error(`MHL API ${resp.status}`);
-  const data = await resp.json();
-
-  if (!data || data.length < 1) {
-    if (debug) console.warn('[DEBUG Oliver St] MHL returned empty top-level array');
-    return [];
-  }
-  const raw = data[0]?.data || [];
+async function fetchKiwisSeries(tsId, fromDt, toDt, debug, source) {
+  const params = kiwisValuesParams(tsId, fromDt, toDt, source);
+  const raw = source === 'wdo'
+    ? await fetchKiwisRows(`${kiwisBase(source)}?${params}`, debug)
+    : await fetchMhlRowsWithMirror(tsId, fromDt, toDt, debug, source);
   if (debug) console.log('[DEBUG Oliver St] MHL raw rows:', raw.length, '| first 5:', raw.slice(0,5), '| last 5:', raw.slice(-5));
 
   let rejected = 0;
