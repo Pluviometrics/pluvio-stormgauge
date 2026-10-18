@@ -20,7 +20,6 @@ nsw_lga_boundaries.geojson
 *.xlsx
 *.geojson
 *.log
-rainfall-tool-standalone/
 
 # local-only scratch — added during 2026-04-27 cleanup
 _patch_index.py
@@ -37,8 +36,6 @@ data/station-verification/
 docs/
 excel_vba/
 extracted_vba/
-stormwater-tools/
-rainfall-tool-standalone/
 packaging_config.example.json
 requirements-arcgis.txt
 scripts/README.md

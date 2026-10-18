@@ -10,7 +10,7 @@
 //   IDR<NN>3 = 128 km   IDR<NN>4 = 64 km
 // The site is chosen per selected LGA (nearest verified site to the LGA's
 // centroid, 128 km product), except that an LGA lying wholly inside Terrey
-// Hills' 64 km range keeps IDR714 (~0.25 km/pixel) for the council stormwater focus.
+// Hills' 64 km range keeps IDR714 (~0.25 km/pixel) for the Northern Beaches stormwater focus.
 // Terrey Hills IDR714 is also the last-resort fallback when no LGA resolves.
 //
 // PNG URL pattern (HTTPS, verified live 2026-05-28, re-verified by browser 2026-09-07):
